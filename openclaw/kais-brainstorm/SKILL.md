@@ -1,5 +1,5 @@
 ---
-name: brainstorm
+name: kais-brainstorm
 description: Systematic brainstorming for any idea — software projects, business ventures, product features, or creative concepts. Use when the user says "brainstorm", "有个想法", "帮我想想", "explore this idea", "帮我分析一下", "评估一下这个方案", "这个靠谱吗", "帮我梳理一下", "给我几个方向", "别问我直接说", "give me your thoughts", "what do you think about", "evaluate this", "feasible?", or presents an idea that needs structured thinking before action. NOT for simple factual questions or one-liner fixes.
 ---
 
