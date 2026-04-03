@@ -14,7 +14,7 @@ const path = require('path');
 const { execSync } = require('child_process');
 
 const args = process.argv.slice(2);
-const crewPath = args.find(a => !a.startsWith('--'));
+// crewPath is declared below (after command parsing, for --template support)
 
 function getCrewDef(p) {
   return require(path.resolve(p));
@@ -95,6 +95,85 @@ tmp/
 *~`
 };
 
+// ── Project Templates ──
+
+const PROJECT_TEMPLATES = {
+  'node-lib': {
+    name: 'Node.js Library',
+    lang: 'node',
+    steps: [
+      { id: 'research', skill: 'deep-research', params: { topic: 'REPLACE_TOPIC', depth: 'medium' }, output: 'docs/research.md' },
+      { id: 'design', skill: 'general', input: 'docs/research.md', output: 'docs/design.md' },
+      { id: 'implement', skill: 'coding-agent', input: 'docs/design.md', output: 'src/index.js' },
+      { id: 'test', skill: 'coding-agent', input: 'src/index.js', output: 'test-results.md', loop: { max: 3, until: '所有测试通过' } },
+      { id: 'docs', skill: 'general', input: ['docs/design.md', 'test-results.md'], output: 'docs/api.md' },
+    ],
+    files: {
+      'src/package.json': JSON.stringify({ name: '', version: '0.1.0', type: 'module', main: 'src/index.js', scripts: { test: 'node --test', lint: 'eslint src/', build: 'esbuild src/index.js --bundle --outfile=dist/index.js --format=esm' } }, null, 2),
+      '.env.example': '# API keys\n# API_KEY=your_key_here\n',
+    },
+  },
+  'python-api': {
+    name: 'Python API Service',
+    lang: 'python',
+    steps: [
+      { id: 'research', skill: 'deep-research', params: { topic: 'REPLACE_TOPIC', depth: 'medium' }, output: 'docs/research.md' },
+      { id: 'implement', skill: 'coding-agent', input: 'docs/research.md', output: 'app/main.py' },
+      { id: 'test', skill: 'coding-agent', input: 'app/main.py', output: 'test-results.md', loop: { max: 3, until: '所有测试通过' } },
+      { id: 'docs', skill: 'general', input: ['docs/research.md', 'test-results.md'], output: 'docs/api.md' },
+    ],
+    files: {
+      'requirements.txt': 'fastapi>=0.100.0\nuvicorn>=0.23.0\npydantic>=2.0.0\n',
+      'Dockerfile': 'FROM python:3.12-slim\nWORKDIR /app\nCOPY requirements.txt .\nRUN pip install -r requirements.txt\nCOPY . .\nCMD ["uvicorn", "app.main:app", "--host", "0.0.0.0", "--port", "8000"]\n',
+      '.env.example': '# Database\n# DATABASE_URL=postgresql://...\n# API_KEY=your_key\n',
+    },
+  },
+  'fullstack': {
+    name: 'Full-Stack Web App',
+    lang: 'node',
+    steps: [
+      { id: 'research', skill: 'deep-research', params: { topic: 'REPLACE_TOPIC', depth: 'medium' }, output: 'docs/research.md' },
+      { id: 'design', skill: 'general', input: 'docs/research.md', output: 'docs/design.md' },
+      { id: 'frontend', skill: 'coding-agent', input: 'docs/design.md', output: 'src/app/index.html' },
+      { id: 'backend', skill: 'coding-agent', input: 'docs/design.md', output: 'src/api/server.js' },
+      { id: 'test', skill: 'coding-agent', input: ['src/app/index.html', 'src/api/server.js'], output: 'test-results.md', loop: { max: 3, until: '测试通过' } },
+      { id: 'docs', skill: 'general', input: ['docs/design.md', 'test-results.md'], output: 'docs/guide.md' },
+    ],
+    files: {
+      'src/package.json': JSON.stringify({ name: '', version: '0.1.0', type: 'module', scripts: { dev: 'node src/api/server.js', build: 'esbuild src/app/index.html --bundle --outfile=dist/index.html', test: 'node --test' } }, null, 2),
+      'docker-compose.yml': 'services:\n  app:\n    build: .\n    ports:\n      - "3000:3000"\n    env_file: .env\n  db:\n    image: postgres:16-alpine\n    environment:\n      POSTGRES_DB: app\n      POSTGRES_PASSWORD: dev\n    ports:\n      - "5432:5432"\n',
+      '.env.example': '# App\n# PORT=3000\n# DATABASE_URL=postgresql://app:dev@localhost:5432/app\n',
+    },
+  },
+  'cli-tool': {
+    name: 'CLI Tool',
+    lang: 'node',
+    steps: [
+      { id: 'research', skill: 'deep-research', params: { topic: 'REPLACE_TOPIC', depth: 'quick' }, output: 'docs/research.md' },
+      { id: 'implement', skill: 'coding-agent', input: 'docs/research.md', output: 'src/cli.js' },
+      { id: 'test', skill: 'coding-agent', input: 'src/cli.js', output: 'test-results.md', loop: { max: 3, until: '测试通过' } },
+      { id: 'docs', skill: 'general', input: ['docs/research.md', 'test-results.md'], output: 'docs/usage.md' },
+    ],
+    files: {
+      'src/package.json': JSON.stringify({ name: '', version: '0.1.0', type: 'module', bin: { cli: 'src/cli.js' }, scripts: { start: 'node src/cli.js', test: 'node --test' } }, null, 2),
+      '.env.example': '# Config\n# CONFIG_PATH=./config.json\n',
+    },
+  },
+  'rust-lib': {
+    name: 'Rust Library',
+    lang: 'rust',
+    steps: [
+      { id: 'research', skill: 'deep-research', params: { topic: 'REPLACE_TOPIC', depth: 'medium' }, output: 'docs/research.md' },
+      { id: 'implement', skill: 'coding-agent', input: 'docs/research.md', output: 'src/lib.rs' },
+      { id: 'test', skill: 'coding-agent', input: 'src/lib.rs', output: 'test-results.md', loop: { max: 3, until: 'cargo test 通过' } },
+      { id: 'docs', skill: 'general', input: ['docs/research.md', 'test-results.md'], output: 'docs/api.md' },
+    ],
+    files: {
+      'Cargo.toml': '[package]\nname = ""\nversion = "0.1.0"\nedition = "2021"\n\n[dependencies]\n\n[dev-dependencies]\n',
+    },
+  },
+};
+
 // ── LFS Patterns ──
 
 const LFS_PATTERNS = {
@@ -163,6 +242,14 @@ Each development step creates a git checkpoint. Use:
   // Create directory structure from steps
   createProjectStructure(crewDef, root);
 
+  // Create template files if any
+  const templateFiles = crewDef.files || {};
+  for (const [filePath, content] of Object.entries(templateFiles)) {
+    const fullPath = path.join(root, filePath);
+    fs.mkdirSync(path.dirname(fullPath), { recursive: true });
+    fs.writeFileSync(fullPath, content);
+  }
+
   // Initial commit
   run('git add -A', root);
   run('git commit -m "init: project bootstrap by project-crew"', root) ||
@@ -173,6 +260,30 @@ Each development step creates a git checkpoint. Use:
   if (!devExists) run('git checkout -b dev', root);
   else run('git checkout dev', root);
 
+  // ── GitHub Remote Integration ──
+  let github = null;
+  const githubConfig = crewDef.github || crewDef.project?.github;
+  if (githubConfig) {
+    const repoName = typeof githubConfig === 'string' ? githubConfig : crewDef.name;
+    const isPrivate = githubConfig.private !== false;
+    const description = crewDef.goal || `Project: ${crewDef.name}`;
+
+    // Check gh auth
+    const ghAuth = run('gh auth status 2>&1', root);
+    if (ghAuth && !ghAuth.includes('not logged in')) {
+      // Create repo
+      const visibility = isPrivate ? '--private' : '--public';
+      const repoUrl = run(`gh repo create ${repoName} ${visibility} --description "${description}" --source=. --push 2>&1`, root);
+      github = { repo: repoName, private: isPrivate, created: !!repoUrl };
+
+      // Push dev branch
+      run('git push -u origin dev', root);
+      github.pushed = true;
+    } else {
+      github = { error: 'gh CLI not authenticated. Run `gh auth login` first.' };
+    }
+  }
+
   return {
     project,
     root,
@@ -181,6 +292,7 @@ Each development step creates a git checkpoint. Use:
     gitInitialized: true,
     branch: 'dev',
     structure: describeStructure(crewDef),
+    github,
   };
 }
 
@@ -484,20 +596,167 @@ function mergeBest(crewPath) {
   };
 }
 
+// ── Cleanup ──
+
+function cleanup(crewPath) {
+  const crewDef = getCrewDef(crewPath);
+  const root = getProjectRoot(crewDef);
+  const metaPath = path.join(root, '.crew-meta.json');
+
+  const removed = [];
+
+  // Remove pruned worktrees if metadata exists
+  if (fs.existsSync(metaPath)) {
+    const meta = JSON.parse(fs.readFileSync(metaPath, 'utf8'));
+
+    // Run evolve to get current pruned list
+    const evolveResult = evolve(crewPath);
+    if (evolveResult.pruned) {
+      for (const wt of evolveResult.pruned) {
+        if (wt.path && fs.existsSync(wt.path)) {
+          fs.rmSync(wt.path, { recursive: true, force: true });
+          removed.push({ branch: wt.branch, path: wt.path, reason: 'pruned' });
+        }
+        // Remove git worktree tracking
+        run(`git worktree remove "${wt.path}" --force 2>/dev/null`, root);
+        // Delete branch
+        run(`git branch -D ${wt.branch} 2>/dev/null`, root);
+      }
+    }
+
+    // Update metadata to only include survivors
+    meta.worktrees = evolveResult.survivors || meta.worktrees;
+    meta.lastCleanup = new Date().toISOString();
+    fs.writeFileSync(metaPath, JSON.stringify(meta, null, 2));
+  }
+
+  // Clean orphan worktree references
+  const wtList = run('git worktree list --porcelain', root) || '';
+  const wtDirs = [];
+  for (const line of wtList.split('\n')) {
+    if (line.startsWith('worktree ')) wtDirs.push(line.slice(9));
+  }
+  for (const wtDir of wtDirs) {
+    if (wtDir === root) continue; // skip main repo
+    if (!fs.existsSync(wtDir)) {
+      run(`git worktree prune`, root);
+      removed.push({ path: wtDir, reason: 'orphan (directory missing)' });
+    }
+  }
+
+  // Optional: git gc
+  const gcFlag = args.includes('--gc');
+  if (gcFlag) {
+    run('git reflog expire --expire=now --all', root);
+    run('git gc --prune=now --aggressive', root);
+    removed.push({ action: 'git gc --aggressive' });
+  }
+
+  return {
+    removed,
+    message: removed.length > 0
+      ? `Cleaned up ${removed.length} item(s).`
+      : 'Nothing to clean up.',
+  };
+}
+
+// ── Template ──
+
+function template(crewPath) {
+  const tmplIdx = args.indexOf('--template');
+  const nameIdx = args.indexOf('--name');
+  const templateName = (tmplIdx >= 0 ? args[tmplIdx + 1] : null) || (nameIdx >= 0 ? args[nameIdx + 1] : null);
+
+  if (!templateName) {
+    return {
+      available: Object.keys(PROJECT_TEMPLATES),
+      usage: 'node project-manager.js --template <name> crew.js',
+      templates: Object.fromEntries(
+        Object.entries(PROJECT_TEMPLATES).map(([k, v]) => [k, { name: v.name, lang: v.lang, steps: v.steps.length }])
+      ),
+    };
+  }
+
+  const tmpl = PROJECT_TEMPLATES[templateName];
+  if (!tmpl) {
+    return { error: `Unknown template "${templateName}". Available: ${Object.keys(PROJECT_TEMPLATES).join(', ')}` };
+  }
+
+  // Generate crew.js from template
+  const topicIdx = args.indexOf('--topic');
+  const topic = (topicIdx >= 0 ? args[topicIdx + 1] : null) || 'your topic here';
+  const crewDef = {
+    name: templateName,
+    goal: `${tmpl.name} — ${topic}`,
+    project: { lang: tmpl.lang },
+    workdir: crewPath ? path.dirname(path.resolve(crewPath)) : `/tmp/crew-${templateName}`,
+    steps: tmpl.steps.map(s => ({
+      ...s,
+      params: s.params ? Object.fromEntries(
+        Object.entries(s.params).map(([k, v]) => [k, v === 'REPLACE_TOPIC' ? topic : v])
+      ) : undefined,
+    })),
+    files: tmpl.files,
+  };
+
+  const outputPath = crewPath || path.join(crewDef.workdir, 'crew.js');
+  fs.mkdirSync(path.dirname(outputPath), { recursive: true });
+  fs.writeFileSync(outputPath, `module.exports = ${JSON.stringify(crewDef, null, 2)};\n`);
+
+  return {
+    template: templateName,
+    name: tmpl.name,
+    lang: tmpl.lang,
+    steps: tmpl.steps.length,
+    topic,
+    output: outputPath,
+    nextStep: `Run: node project-manager.js --bootstrap ${outputPath}`,
+  };
+}
+
+// ── Push ──
+
+function pushToRemote(crewPath) {
+  const crewDef = getCrewDef(crewPath);
+  const root = getProjectRoot(crewDef);
+  const branch = args[args.indexOf('--branch') + 1] || run('git branch --show-current', root) || 'dev';
+
+  const remote = run('git remote get-url origin', root);
+  if (!remote) {
+    return { error: 'No remote configured. Use `github: true` in crew.js bootstrap.' };
+  }
+
+  const pushResult = run(`git push -u origin ${branch}`, root);
+
+  return {
+    branch,
+    remote,
+    result: pushResult || 'already up to date',
+  };
+}
+
 // ── CLI ──
 
+let crewPath = args.find(a => !a.startsWith('--'));
 const command = args.find(a => a.startsWith('--'))?.replace('--', '');
+// For --template, crewPath is optional (it's the output path)
+if (command === 'template') {
+  crewPath = args.find(a => !a.startsWith('--') && a.endsWith('.js'));
+}
 
-if (!crewPath || !command) {
+if (!command || (command !== 'template' && !crewPath)) {
   console.error(`Usage: node project-manager.js --<command> <crew.js>
 Commands:
-  --bootstrap    Create repo with .gitignore, LFS, directory structure
-  --worktrees    Create N parallel git worktrees (N = crew.worktrees or 2)
-  --checkpoint   Commit current state (--step <id> --message <msg>)
-  --status       Show project status, checkpoints, worktrees
-  --rollback     Rollback to a commit (--to <commit>)
-  --evolve       Compare worktrees, keep best, prune underperformers
-  --merge        Merge best worktree into main`);
+  --bootstrap      Create repo with .gitignore, LFS, directory structure, GitHub remote
+  --template NAME  Generate crew.js from template (node-lib/python-api/fullstack/cli-tool/rust-lib)
+  --worktrees      Create N parallel git worktrees (N = crew.worktrees or 2)
+  --checkpoint     Commit current state (--step <id> --message <msg>)
+  --status         Show project status, checkpoints, worktrees
+  --rollback       Rollback to a commit (--to <commit>)
+  --evolve         Compare worktrees, keep best, prune underperformers
+  --merge          Merge best worktree into main
+  --cleanup        Remove pruned worktrees and orphan references (--gc for aggressive cleanup)
+  --push           Push current branch to remote (--branch <name>)`);
   process.exit(1);
 }
 
@@ -505,12 +764,15 @@ try {
   let result;
   switch (command) {
     case 'bootstrap': result = bootstrap(crewPath); break;
+    case 'template': result = template(null); break;  // crewPath optional for template
     case 'worktrees': result = createWorktrees(crewPath); break;
     case 'checkpoint': result = checkpoint(crewPath); break;
     case 'status': result = status(crewPath); break;
     case 'rollback': result = rollback(crewPath); break;
     case 'evolve': result = evolve(crewPath); break;
     case 'merge': result = mergeBest(crewPath); break;
+    case 'cleanup': result = cleanup(crewPath); break;
+    case 'push': result = pushToRemote(crewPath); break;
     default: console.error(`Unknown command: --${command}`); process.exit(1);
   }
   console.log(JSON.stringify(result, null, 2));
