@@ -465,12 +465,17 @@ function generateCommands(crewPath) {
       // Approval gate metadata
       if (step.await) {
         const approval = approvalAnalysis.find(a => a.id === id);
+        // reviewFiles: the step's own output (what was just produced) + any inputs for context
+        const reviewFiles = [...outputs];
+        for (const inp of approval?.inputs || []) {
+          if (!reviewFiles.includes(inp)) reviewFiles.push(inp);
+        }
         cmd.await = {
           type: 'human',
           prompt: approval?.prompt,
           cronSkip: !approval?.cronAwait,
           timeout: approval?.timeout,
-          reviewFiles: approval?.inputs || [],
+          reviewFiles,
         };
       }
 

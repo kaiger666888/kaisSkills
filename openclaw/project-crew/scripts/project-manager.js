@@ -402,11 +402,12 @@ function checkpoint(crewPath) {
   const msg = args[args.indexOf('--message') + 1] || `checkpoint: ${stepId} completed`;
 
   run('git add -A', root);
-  const hash = run(`git commit -m "${msg}"`, root);
+  const commitOutput = run(`git commit -m "${msg}"`, root);
+  const hash = commitOutput ? commitOutput.match(/\[.+\s([a-f0-9]+)\]/)?.[1] : null;
 
   return {
     step: stepId,
-    commit: hash,
+    commit: hash || commitOutput,
     message: msg,
     timestamp: new Date().toISOString(),
   };
@@ -445,14 +446,14 @@ function rollback(crewPath) {
   const root = getProjectRoot(crewDef);
   const targetCommit = args[args.indexOf('--to') + 1];
 
-  if (!targetCommit) {
+  if (!targetCommit || targetCommit.startsWith('--')) {
     return { error: 'Missing --to <commit>. Use --status to see available checkpoints.' };
   }
 
   // Check if commit exists
   const valid = run(`git cat-file -t ${targetCommit}`, root);
   if (!valid) {
-    return { error: `Commit ${targetCommit} not found` };
+    return { error: `Commit "${targetCommit}" not found in this repository. Use --status to see available checkpoints.` };
   }
 
   // Create recovery branch before rollback
