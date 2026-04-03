@@ -371,6 +371,37 @@ function generateCommands(crewPath) {
   const warnings = validateParams(steps, registryPath);
   if (resolved._nestedWarnings) warnings.push(...resolved._nestedWarnings);
 
+  // Approval gate: steps with await:"human" must block subsequent steps in same layer
+  // Re-layer: if a step with await:"human" is in layer N, move all other steps in that
+  // layer (that don't have await) to layer N+1, adding dependency on the approval step
+  const approvalStepIds = new Set(steps.filter(s => s.await === 'human').map(s => s.id));
+  if (approvalStepIds.size > 0) {
+    const newLayers = [];
+    for (const layer of layers) {
+      const approvalInLayer = layer.filter(id => approvalStepIds.has(id));
+      const otherInLayer = layer.filter(id => !approvalStepIds.has(id));
+      if (approvalInLayer.length > 0 && otherInLayer.length > 0) {
+        // Approval steps go in current layer, others deferred
+        newLayers.push(approvalInLayer);
+        // Add synthetic edges: other steps depend on approval steps
+        for (const apId of approvalInLayer) {
+          for (const oId of otherInLayer) {
+            if (!edges.some(([a, b]) => a === apId && b === oId)) {
+              edges.push([apId, oId]);
+            }
+          }
+        }
+        newLayers.push(otherInLayer);
+      } else {
+        newLayers.push(layer);
+      }
+    }
+    // Re-topological-sort after adding edges
+    const reLayers = topologicalSort(nodes, edges);
+    layers.length = 0;
+    layers.push(...reLayers);
+  }
+
   const commands = [];
   for (let i = 0; i < layers.length; i++) {
     for (const id of layers[i]) {
@@ -384,7 +415,9 @@ function generateCommands(crewPath) {
       const outputStr = outputs.length > 0 ? `，输出到 ${outputs.join(', ')}` : '';
       const instruction = step.crew
         ? `展开嵌套 DAG: ${step.crew}${paramStr}${inputStr}${outputStr}`
-        : `使用 ${step.skill} skill${paramStr}${inputStr}${outputStr}`;
+        : step.skill
+        ? `使用 ${step.skill} skill${paramStr}${inputStr}${outputStr}`
+        : `${inputStr ? '读取 ' + inputs.join(', ') + '，' : ''}执行 ${id}${paramStr}${outputStr}`;
 
       // Build validation hint
       let validation = null;
