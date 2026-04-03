@@ -53,6 +53,8 @@ module.exports = {
 | `await` | string | `"human"` = 审批门，执行到此处暂停等用户确认 |
 | `loop` | object | `{ max: 10, until: "quality >= 8" }` 事件循环 |
 | `timeout` | number | 超时秒数 |
+| `retry` | object\|number | 重试配置：`{ max: 3, delay: 5000 }` 或数字（默认 delay 3s） |
+| `fallback` | string | 失败时替代 skill 名称 |
 | `parallel` | number | 并行度限制 |
 
 ### 隐式 input 规则
@@ -104,9 +106,16 @@ module.exports = {
 │ 6. 等待同层完成 → 下一层                │
 │ 7. 遇到 await:"human" → 暂停汇报        │
 │ 8. 遇到 loop → 执行+检查 until 条件     │
-│ 9. 全部完成 → 汇总结果                  │
+│ 9. 失败 → retry 重试 / fallback 降级    │
+│ 10. 全部完成 → 汇总结果                  │
 └─────────────────────────────────────────┘
 ```
+
+### 重试与降级
+
+- **retry**: step 失败后自动重试，支持 `max`（次数）和 `delay`（间隔 ms）
+- **fallback**: 重试耗尽后，切换到替代 skill 执行
+- 执行日志记录每次尝试的状态、耗时和 token 消耗
 
 ### Sub-Agent 调用
 
@@ -200,3 +209,11 @@ deliver: telegram -1003840246680
 
 - `references/orchestrator.md` — 编排器算法详细实现
 - `references/patterns.md` — 执行模式详解与示例
+- `references/skill-registry.md` — 常用 skill 参数格式与执行方式
+
+## 编排器 CLI
+
+```bash
+# 输出执行计划（JSON）
+node scripts/orchestrator.js /path/to/crew.js
+```

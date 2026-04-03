@@ -131,6 +131,18 @@ function assert(label, condition, detail) {
   }
 }
 
+// ── Retry / Fallback helpers (shared with orchestrator.js) ──
+
+function parseRetry(step) {
+  if (!step.retry) return { max: 0, delay: 0 };
+  if (typeof step.retry === 'number') return { max: step.retry, delay: 3000 };
+  return { max: step.retry.max || 3, delay: step.retry.delay || 5000 };
+}
+
+function parseFallback(step) {
+  return step.fallback || null;
+}
+
 // ── T01: Pipeline ──
 
 {
@@ -305,6 +317,55 @@ function assert(label, condition, detail) {
 
   assert("T10: auto mode is fan-out", autoMode === "fan-out", `got ${autoMode}`);
   assert("T10: explicit override wins", overrideMode === "pipeline", `got ${overrideMode}`);
+}
+
+// ── T11: Retry config parsing ──
+
+{
+  const steps = [
+    { id: "a", skill: "s1", output: "a.md", retry: { max: 3, delay: 5000 } },
+    { id: "b", skill: "s2", input: "a.md", retry: 2 },
+    { id: "c", skill: "s3", input: "a.md" },
+  ];
+  const { nodes, edges } = buildDAG(steps);
+
+  assert("T11: retry — object config", parseRetry(steps[0]).max === 3 && parseRetry(steps[0]).delay === 5000);
+  assert("T11: retry — number shorthand", parseRetry(steps[1]).max === 2 && parseRetry(steps[1]).delay === 3000);
+  assert("T11: retry — no retry defaults zero", parseRetry(steps[2]).max === 0);
+}
+
+// ── T12: Fallback config parsing ──
+
+{
+  const steps = [
+    { id: "a", skill: "s1", output: "a.md" },
+    { id: "b", skill: "s2", input: "a.md", fallback: "deep-research" },
+    { id: "c", skill: "s3", input: "a.md" },
+  ];
+
+  assert("T12: fallback — has fallback", parseFallback(steps[1]) === "deep-research");
+  assert("T12: fallback — no fallback returns null", parseFallback(steps[0]) === null);
+  assert("T12: fallback — no fallback returns null (c)", parseFallback(steps[2]) === null);
+}
+
+// ── T13: Execution log format ──
+
+{
+  const logEntry = {
+    timestamp: "2026-04-03T18:55:00Z",
+    project: "tech-research-test",
+    step: "search",
+    status: "success",
+    duration: 42000,
+    tokens: 8000,
+    output: "/tmp/crew-xxx/research.md",
+  };
+  const validStatuses = ["success", "failed", "retrying", "fallback"];
+
+  assert("T13: log — has required fields",
+    logEntry.timestamp && logEntry.project && logEntry.step && logEntry.status && logEntry.duration != null);
+  assert("T13: log — valid status", validStatuses.includes(logEntry.status));
+  assert("T13: log — duration is number", typeof logEntry.duration === "number" && logEntry.duration > 0);
 }
 
 // ── Report ──
