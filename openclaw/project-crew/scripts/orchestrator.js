@@ -37,7 +37,26 @@ function parseSkillRegistry(registryPath) {
 }
 
 // Step-level fields that are NOT skill params
-const STEP_LEVEL_FIELDS = new Set(['id', 'skill', 'input', 'output', 'mode', 'await', 'loop', 'timeout', 'retry', 'fallback', 'parallel', 'crew', 'workdir', 'awaitPrompt', 'awaitTimeout', 'cronAwait']);
+const STEP_LEVEL_FIELDS = new Set(['id', 'skill', 'input', 'output', 'mode', 'await', 'loop', 'timeout', 'retry', 'fallback', 'parallel', 'crew', 'workdir', 'awaitPrompt', 'awaitTimeout', 'cronAwait', 'evolve']);
+
+// Skills that default to evolutionary development (user can add others via evolve: true)
+const EVOLVE_ELIGIBLE_SKILLS = new Set(['coding-agent', 'deep-research']);
+
+// ── Evolve: evolutionary development ──
+// Determine if a step should use evolutionary development.
+// Default ON for creative skills that produce output, unless explicitly disabled.
+function shouldEvolve(step) {
+  // Explicit opt-out
+  if (step.evolve === false) return { enabled: false, reason: 'user-disabled' };
+  // Explicit opt-in with config
+  if (step.evolve && typeof step.evolve === 'object') return { enabled: true, reason: 'user-configured', ...step.evolve };
+  // Creative skills with output → default ON
+  // But only if the step has no explicit evolve: null (undefined means not set)
+  if (step.evolve === undefined && EVOLVE_ELIGIBLE_SKILLS.has(step.skill || '') && step.output) {
+    return { enabled: true, reason: 'default (creative skill)', rounds: 1, variants: 2, survive: 1, mutate: '', criteria: '' };
+  }
+  return null; // no evolve
+}
 
 function validateParams(steps, registryPath) {
   const warnings = [];
@@ -470,6 +489,22 @@ function generateCommands(crewPath) {
         }
       }
 
+      // ── Evolve: evolutionary development ──
+      const evolveResult = shouldEvolve(step);
+      if (evolveResult && evolveResult.enabled) {
+        cmd.evolve = {
+          enabled: true,
+          rounds: evolveResult.rounds || 1,
+          variants: evolveResult.variants || 2,
+          survive: evolveResult.survive || 1,
+          mutate: evolveResult.mutate || '',
+          criteria: evolveResult.criteria || '',
+          reason: evolveResult.reason || 'default',
+        };
+      } else if (evolveResult && !evolveResult.enabled) {
+        cmd.evolve = { enabled: false, reason: evolveResult.reason };
+      }
+
       if (step.timeout) cmd.timeout = step.timeout;
       if (step._nestedWorkdir) cmd.nestedWorkdir = step._nestedWorkdir;
       if (step._parentId) cmd.parentStep = step._parentId;
@@ -499,13 +534,21 @@ function generateCommands(crewPath) {
       hasApproval: approvalAnalysis.length > 0,
       hasLoop: loopAnalysis.length > 0,
       hasNested: steps.some(s => s._parentId),
+      hasEvolve: commands.some(c => c.evolve?.enabled),
       approvalGates: approvalAnalysis.length > 0 ? approvalAnalysis : undefined,
       loopSteps: loopAnalysis.length > 0 ? loopAnalysis : undefined,
+      evolveSteps: commands.filter(c => c.evolve?.enabled).map(c => ({
+        step: c.step,
+        skill: c.skillRef,
+        variants: c.evolve.variants,
+        rounds: c.evolve.rounds,
+        reason: c.evolve.reason,
+      })),
     },
     logTemplate: {
       format: "[CREW] {{step}} | {{status}} | {{duration}}ms",
       fields: ["step", "status", "duration"],
-      statuses: ["running", "success", "failed", "retrying", "fallback", "skipped", "awaiting_approval", "loop_iteration"],
+      statuses: ["running", "success", "failed", "retrying", "fallback", "skipped", "awaiting_approval", "loop_iteration", "evolve_round"],
       example: "[CREW] search | success | 42000ms",
     },
   };
