@@ -24,9 +24,9 @@ function getProjectRoot(crewDef) {
   return crewDef.workdir || crewDef.repoPath || `/tmp/crew-${crewDef.name}`;
 }
 
-function run(cmd, cwd) {
+function run(cmd, cwd, { silent = false } = {}) {
   try {
-    return execSync(cmd, { cwd, encoding: 'utf8', timeout: 30000 }).trim();
+    return execSync(cmd, { cwd, encoding: 'utf8', timeout: 30000, stdio: ['pipe','pipe','pipe'] }).trim();
   } catch (e) {
     return null;
   }
@@ -188,7 +188,7 @@ const LFS_PATTERNS = {
 function bootstrap(crewPath) {
   const crewDef = getCrewDef(crewPath);
   const root = getProjectRoot(crewDef);
-  const project = crewDef.project || crewDef.name;
+  const project = typeof crewDef.project === 'object' ? crewDef.name : (crewDef.project || crewDef.name);
 
   if (!fs.existsSync(root)) fs.mkdirSync(root, { recursive: true });
 
@@ -764,7 +764,7 @@ try {
   let result;
   switch (command) {
     case 'bootstrap': result = bootstrap(crewPath); break;
-    case 'template': result = template(null); break;  // crewPath optional for template
+    case 'template': result = template(crewPath); break;  // crewPath optional for template
     case 'worktrees': result = createWorktrees(crewPath); break;
     case 'checkpoint': result = checkpoint(crewPath); break;
     case 'status': result = status(crewPath); break;
