@@ -527,14 +527,75 @@ node scripts/orchestrator.js --execute /path/to/crew.js
 ## 项目管理 CLI
 
 ```bash
-node scripts/project-manager.js --bootstrap <crew.js>    # 创建仓库
+# 生命周期
+node scripts/project-manager.js --bootstrap <crew.js>    # 创建仓库 + GitHub remote
 node scripts/project-manager.js --worktrees <crew.js>    # 创建并行 worktree
 node scripts/project-manager.js --checkpoint <crew.js>   # 保存检查点
 node scripts/project-manager.js --status <crew.js>       # 查看状态
 node scripts/project-manager.js --rollback <crew.js> --to <commit>  # 回溯
 node scripts/project-manager.js --evolve <crew.js>       # 优胜劣汰
 node scripts/project-manager.js --merge <crew.js>        # 合并最佳
+node scripts/project-manager.js --cleanup <crew.js>      # 清理 worktree [--gc]
+node scripts/project-manager.js --push <crew.js>         # 推送到远程 [--branch <name>]
+
+# 模板
+node scripts/project-manager.js --template              # 列出可用模板
+node scripts/project-manager.js --template node-lib     # 生成 crew.js
+node scripts/project-manager.js --template fullstack --topic "AI app"
 ```
+
+### 项目模板
+
+| 模板 | 语言 | 步骤 | 说明 |
+|------|------|------|------|
+| `node-lib` | Node.js | 5 | 库/包开发（research → design → implement → test → docs） |
+| `python-api` | Python | 4 | API 服务（research → implement → test → docs） |
+| `fullstack` | Node.js | 6 | 全栈 Web 应用（+ 前后端并行开发） |
+| `cli-tool` | Node.js | 4 | CLI 工具（research → implement → test → docs） |
+| `rust-lib` | Rust | 4 | Rust 库（research → implement → test → docs） |
+
+模板自动生成：`.gitignore`、`.env.example`、`package.json`/`requirements.txt`/`Cargo.toml`/`Dockerfile`/`docker-compose.yml`（按语言）。
+
+**使用流程：**
+```bash
+# 1. 从模板生成
+node scripts/project-manager.js --template fullstack --topic "AI 代码审查" > crew.js
+
+# 2. 引导项目（创建仓库 + GitHub）
+node scripts/project-manager.js --bootstrap crew.js
+
+# 3. 并行开发（3 个 worktree）
+node scripts/project-manager.js --worktrees crew.js
+
+# 4. 在每个 worktree 中执行 DAG + checkpoint...
+
+# 5. 优胜劣汰 + 合并
+node scripts/project-manager.js --evolve crew.js
+node scripts/project-manager.js --merge crew.js
+
+# 6. 推送
+node scripts/project-manager.js --push crew.js
+
+# 7. 清理
+node scripts/project-manager.js --cleanup crew.js --gc
+```
+
+### GitHub 远程集成
+
+在 crew.js 中添加 `github: true` 或 `github: "repo-name"`：
+
+```js
+module.exports = {
+  name: "my-project",
+  github: true,              // 自动创建 GitHub repo（私有）
+  // 或:
+  github: "my-awesome-repo", // 指定仓库名
+  github: { repo: "name", private: false }, // 完整配置
+  steps: [...]
+};
+```
+
+Bootstrap 时自动：`gh repo create` → `git push origin dev`。需要 `gh auth login`。
 
 ### 执行日志
 
