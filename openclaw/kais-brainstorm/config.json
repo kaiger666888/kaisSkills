@@ -1,10 +1,10 @@
 {
   "subAgent": {
     "model": {
-      "research": "current",
-      "framework": "claude-sonnet-4-20250514",
-      "trends": "current",
-      "technical": "claude-sonnet-4-20250514"
+      "research": "zai/glm-5-turbo",
+      "framework": "zai/glm-5.1",
+      "trends": "zai/glm-5-turbo",
+      "technical": "zai/glm-5.1"
     },
     "description": {
       "research": "Step 4: competitive/market research",
