@@ -178,12 +178,77 @@ module.exports = {
 // 推断: topic → (article, xhs, chart1) [fan-out] → chart2 [dag]
 ```
 
+## 高级模式执行指南（AI 必须遵循）
+
+### Approval Gate（人工审批）
+
+当 command 包含 `await` 字段时：
+
+```
+1. 执行到该 step 时，先完成所有前置 step
+2. 收集 await.reviewFiles 列出的文件内容
+3. 向用户发送审批请求，包含：
+   - 当前进度（已完成的 steps）
+   - 待审批内容（文件摘要或关键片段）
+   - await.prompt 中定义的审批问题
+   - 选项：✅ 继续 / ❌ 终止 / ✏️ 修改意见
+4. 等待用户回复
+5. 用户确认 → 继续执行后续 step
+6. 用户拒绝 → 终止编排，报告原因
+7. 用户修改 → 根据修改意见调整后重新审批
+```
+
+**Cron 模式下**：`await.cronSkip: true` 的 step 自动跳过，`cronAwait: true` 的 step 正常暂停（cron 会发送通知）。
+
+### Event Loop（事件循环）
+
+当 command 包含 `loop` 字段时：
+
+```
+1. 执行该 step
+2. 检查产出（loop.selfLoop 时检查 output 文件内容）
+3. 评估 loop.until 条件（AI 判断内容质量是否达标）
+4. 如果达标 → 退出循环，继续后续 step
+5. 如果未达标且迭代次数 < loop.max → 重新执行该 step
+6. 达到 loop.max → 退出循环，记录最终状态
+7. 每次迭代输出日志：[CREW] {step} | loop_iteration | {current}/{max}
+```
+
+**条件评估**：AI 读取产出文件，基于 `loop.until` 描述判断。如果有 `loop.condition`（JS 表达式），也可程序化检查。
+
+### Nested DAG（嵌套编排）
+
+当 step 定义了 `crew` 字段而非 `skill` 时：
+
+```js
+{
+  id: "sub-project",
+  crew: "./sub-crew.js",     // 相对路径，指向另一个 crew.js
+  input: "shared-data.md",   // 传递给子 DAG 第一个 step 的输入
+  output: "final-result.md"  // 子 DAG 最后一个 step 的输出映射回父 DAG
+}
+```
+
+orchestrator 会自动展开嵌套 DAG，子 step 的 id 加上 `parentId.` 前缀。`--execute` 输出中标记了 `parentStep` 和 `nestedWorkdir`。
+
+### Retry / Fallback 执行
+
+当 command 包含 `retry` 时：
+
+```
+1. step 失败 → 检查 retry.max
+2. 未达上限 → 等待 retry.delay ms → 重新 spawn sub-agent
+3. 达到上限 → 如果有 fallback，切换到 fallback skill 重新执行
+4. 无 fallback → 标记失败，继续/终止取决于是否有下游依赖
+```
+
+日志：`[CREW] {step} | retrying | {attempt}/{max}` / `[CREW] {step} | fallback | {fallback_skill}`
+
 ## Cron 集成
 
 编排项目可直接通过 cron 定时执行：
 
 ```
-# 每天早上 8 点运行每日研究
 cron: 0 8 * * *
 task: 读取 /tmp/crew-daily-research/crew.js 并按 project-crew 流程编排执行
 deliver: telegram -1003840246680
@@ -216,4 +281,72 @@ deliver: telegram -1003840246680
 ```bash
 # 输出执行计划（JSON）
 node scripts/orchestrator.js /path/to/crew.js
+
+# 输出结构化执行指令（推荐 — AI 直接按指令执行）
+node scripts/orchestrator.js --execute /path/to/crew.js
+```
+
+### --execute 模式
+
+`--execute` 输出可直接执行的指令列表，AI 无需手动分析 DAG 或猜参数：
+
+```json
+{
+  "project": "tech-research-test",
+  "workdir": "/tmp/crew-tech-research-test",
+  "inferredMode": "pipeline",
+  "totalSteps": 2,
+  "commands": [
+    {
+      "step": "search",
+      "layer": 0,
+      "instruction": "使用 deep-research skill topic='AI 2026', depth='medium'，输出到 research.md",
+      "skillRef": "deep-research",
+      "params": { "topic": "AI 2026", "depth": "medium" },
+      "input": null,
+      "output": ["research.md"],
+      "validation": "检查 research.md 存在且非空"
+    },
+    {
+      "step": "notion",
+      "layer": 1,
+      "instruction": "使用 notion skill pageId='xxx'，读取 research.md",
+      "skillRef": "notion",
+      "params": { "pageId": "xxx" },
+      "input": ["research.md"],
+      "output": null,
+      "validation": null,
+      "retry": { "max": 3, "delay": 5000 },
+      "fallback": "deep-research"
+    }
+  ],
+  "logTemplate": {
+    "format": "[CREW] {{step}} | {{status}} | {{duration}}ms",
+    "example": "[CREW] search | success | 42000ms"
+  }
+}
+```
+
+**AI 执行流程：**
+1. 运行 `--execute` 获取 commands 列表
+2. 按 layer 顺序执行（同层可并行）
+3. 每步执行前读取对应 skill 的 SKILL.md
+4. 执行后按 `validation` 字段验证结果
+5. 按 `logTemplate.format` 输出日志行
+6. 失败时按 `retry`/`fallback` 配置处理
+
+### 参数校验
+
+`--execute` 模式自动检查每个 step 的必填参数是否齐全，缺失时在 `warnings` 数组中输出警告。参数定义来自 `references/skill-registry.md`。
+
+### 执行日志
+
+执行时按模板输出日志，便于解析和追踪：
+```
+[CREW] search | running | 0ms
+[CREW] search | success | 42000ms
+[CREW] notion | running | 0ms
+[CREW] notion | failed | 15000ms
+[CREW] notion | retrying | 15000ms
+[CREW] notion | success | 28000ms
 ```

@@ -19,8 +19,6 @@ module.exports = {
 };
 ```
 
-**执行：** 按顺序逐个执行，前一个完成后启动下一个。
-
 ## 2. Fan-out（并行分发）
 
 **图特征：** 一个 step 的 output 被多个独立 step 消费，且这些消费者之间无互相依赖。
@@ -42,8 +40,6 @@ module.exports = {
   ]
 };
 ```
-
-**执行：** A 完成后，B/C/D 同时 spawn 并行执行。
 
 ## 3. Map-Reduce（多源收集汇总）
 
@@ -68,47 +64,148 @@ module.exports = {
 };
 ```
 
-**执行：** A/B/C 并行，全部完成后启动 D。
+## 4. Approval Gate（人工审批）✨ 高级
 
-## 4. Approval Gate（人工审批）
+**图特征：** step 标记了 `await: "human"`。
 
-**图特征：** 任何 step 标记了 `await: "human"`。
+```
+A ──→ B ──⏸️ C (approval) ──→ D
+```
 
 ```js
 module.exports = {
   name: "approval-example",
   steps: [
     { id: "draft", skill: "deep-research", params: { topic: "..." }, output: "draft.md" },
-    { id: "review", input: "draft.md", await: "human" },  // 暂停，等待确认
+    {
+      id: "review",
+      input: "draft.md",
+      await: "human",
+      awaitPrompt: "请审核以下研究报告，确认内容质量后继续发布。如需修改请说明具体意见。"
+    },
     { id: "publish", skill: "xiaohongshu-ops", input: "draft.md" }
   ]
 };
 ```
 
-**执行：** 到达审批 step 时暂停，向用户展示当前进度和待审批内容，等待用户确认/拒绝/修改后继续。
+**`await` 扩展字段：**
 
-## 5. Event Loop（动态循环）
+| 字段 | 说明 |
+|------|------|
+| `await` | `"human"` = 启用审批 |
+| `awaitPrompt` | 审批时展示给用户的问题/说明 |
+| `awaitTimeout` | 超时分钟数，超时后自动继续或终止 |
+| `cronAwait` | cron 模式下是否仍暂停（默认 false，cron 中自动跳过） |
 
-**图特征：** step 标记了 `loop`，或存在环依赖。
+**AI 执行流程：**
+1. 完成前置 steps → 收集 `input` 文件
+2. 向用户发送消息：进度摘要 + 待审批内容 + 选项（✅继续/❌终止/✏️修改）
+3. 等待用户回复 → 根据决定继续或终止
+
+## 5. Event Loop（事件循环）✨ 高级
+
+**图特征：** step 标记了 `loop`，或 output 文件 == input 文件（自环）。
+
+```
+A ──→ B ──→ B ──→ B ──→ C
+         (loop up to max)
+```
 
 ```js
 module.exports = {
   name: "loop-example",
   steps: [
-    { id: "draft", skill: "deep-research", params: { topic: "..." }, output: "v1.md" },
+    { id: "draft", skill: "deep-research", params: { topic: "..." }, output: "article.md" },
     {
-      id: "review",
-      input: "v1.md",
-      output: "v1.md",   // 覆写 = 环
-      loop: { max: 5, until: "内容质量达标，无明显错误" }
-    }
+      id: "refine",
+      skill: "general",
+      input: "article.md",
+      output: "article.md",   // 覆写 = 自环
+      loop: {
+        max: 3,
+        until: "文章结构完整，有数据支撑，无明显事实错误",
+      }
+    },
+    { id: "publish", skill: "notion", input: "article.md" }
   ]
 };
 ```
 
-**执行：** 循环执行 review step，每次检查 until 条件，达到 max 次数或条件满足后退出。
+**`loop` 扩展字段：**
 
-## 6. DAG（通用有向无环图）
+| 字段 | 说明 |
+|------|------|
+| `max` | 最大迭代次数（默认 5） |
+| `until` | 退出条件描述（AI 自然语言判断） |
+| `condition` | 程序化条件（JS 表达式，可选） |
+
+**AI 执行流程：**
+1. 执行 step → 产出文件
+2. 读取产出，评估 `until` 条件
+3. 达标 → 退出循环，继续下游
+4. 未达标且 `iteration < max` → 重新执行（带入上次产出作为 input）
+5. 达到 max → 退出，记录最终状态
+
+**日志示例：**
+```
+[CREW] refine | running | 0ms
+[CREW] refine | loop_iteration | 1/3
+[CREW] refine | loop_iteration | 2/3
+[CREW] refine | success | 45000ms (exited: condition met)
+```
+
+## 6. Nested DAG（嵌套编排）✨ 高级
+
+**图特征：** step 引用另一个 crew.js 文件，形成嵌套 DAG。
+
+```
+┌─────────────────┐
+│ Parent DAG      │
+│                 │
+│ A ──→ [Sub] ──→ C │
+│       ┌───┬───┐  │
+│       │ X │ Y │  │
+│       └───┴───┘  │
+└─────────────────┘
+```
+
+**父 crew.js:**
+```js
+module.exports = {
+  name: "parent-project",
+  steps: [
+    { id: "data", skill: "deep-research", params: { topic: "..." }, output: "data.md" },
+    {
+      id: "sub-analysis",
+      crew: "./sub-crew.js",
+      input: "data.md",
+      output: "analysis-result.md"
+    },
+    { id: "report", skill: "notion", input: "analysis-result.md" }
+  ]
+};
+```
+
+**sub-crew.js:**
+```js
+module.exports = {
+  name: "sub-analysis",
+  steps: [
+    { id: "extract", skill: "general", output: "extracted.md" },
+    { id: "visualize", skill: "chart-image", input: "extracted.md", output: "chart.png" },
+    { id: "summarize", skill: "general", input: ["extracted.md", "chart.png"], output: "result.md" }
+  ]
+};
+```
+
+**展开后的 DAG：**
+```
+data → sub-analysis.extract → sub-analysis.visualize → sub-analysis.summarize → report
+```
+
+子 step 的 id 自动加上 `parentId.` 前缀（如 `sub-analysis.extract`）。
+
+## 7. DAG（通用有向无环图）
 
 **图特征：** 上述模式的任意嵌套组合。
 
@@ -135,12 +232,29 @@ module.exports = {
 
 **执行：** 拓扑排序为 [[A, D], [B, C], [E], [F]]，同层并行，层间串行。
 
-## 模式强制覆盖
+## 8. 组合模式示例
 
-任何 step 都可通过 `mode` 字段强制指定执行策略，覆盖自动推断：
+**研究 → 循环优化 → 审批 → 发布：**
 
 ```js
-{ id: "x", skill: "...", mode: "fan-out" }
+module.exports = {
+  name: "full-pipeline",
+  steps: [
+    { id: "research", skill: "deep-research", params: { topic: "...", depth: "medium" }, output: "draft.md" },
+    {
+      id: "refine",
+      input: "draft.md",
+      output: "draft.md",
+      loop: { max: 2, until: "内容质量达标" }
+    },
+    {
+      id: "approve",
+      input: "draft.md",
+      await: "human",
+      awaitPrompt: "请审核报告质量"
+    },
+    { id: "publish", skill: "notion", input: "draft.md", retry: { max: 3 } }
+  ]
+};
+// Pipeline + Event Loop + Approval + Retry — 全模式组合
 ```
-
-这对编排器提示：该 step 的所有下游应以 fan-out 方式执行。

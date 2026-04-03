@@ -1,22 +1,80 @@
 #!/usr/bin/env node
 // project-crew orchestrator — reads crew.js, builds DAG, outputs execution plan
-// Usage: node orchestrator.js <crew.js path>
+// Usage: node orchestrator.js [--execute] <crew.js path>
 
 const fs = require('fs');
 const path = require('path');
+
+// ── CLI args ──
+
+const args = process.argv.slice(2);
+const executeMode = args.includes('--execute');
+const crewPath = args.find(a => !a.startsWith('--'));
+
+// ── Parameter Validation ──
+
+function parseSkillRegistry(registryPath) {
+  const regDir = path.dirname(registryPath);
+  const content = fs.readFileSync(registryPath, 'utf8');
+  const skills = {};
+  let currentSkill = null;
+  for (const line of content.split('\n')) {
+    const heading = line.match(/^## (.+)$/);
+    if (heading) {
+      currentSkill = heading[1].trim();
+      skills[currentSkill] = { required: [], optional: [] };
+      continue;
+    }
+    if (!currentSkill) continue;
+    const match = line.match(/^\| (\w+) \|/);
+    if (!match) continue;
+    const field = match[1];
+    const isRequired = line.includes('✅');
+    if (isRequired) skills[currentSkill].required.push(field);
+    else skills[currentSkill].optional.push(field);
+  }
+  return skills;
+}
+
+function validateParams(steps, registryPath) {
+  const warnings = [];
+  try {
+    const reg = parseSkillRegistry(registryPath);
+    for (const step of steps) {
+      if (!step.skill) continue;
+      const skillDef = reg[step.skill];
+      if (!skillDef) {
+        warnings.push(`⚠️  Step "${step.id}": skill "${step.skill}" not found in registry`);
+        continue;
+      }
+      for (const field of skillDef.required) {
+        if (!step.params || !(field in step.params)) {
+          warnings.push(`⚠️  Step "${step.id}": missing required param "${field}" for skill "${step.skill}"`);
+        }
+      }
+    }
+  } catch (e) {
+    warnings.push(`⚠️  Could not read skill registry: ${e.message}`);
+  }
+  return warnings;
+}
 
 // ── DAG Core ──
 
 function buildDAG(steps) {
   const nodes = new Map();
   const edges = [];
+  // outputMap: filename → [stepId, ...] (multiple steps can output same file in loops)
   const outputMap = new Map();
 
   for (const step of steps) {
     nodes.set(step.id, step);
     if (step.output) {
       const outputs = Array.isArray(step.output) ? step.output : [step.output];
-      for (const f of outputs) outputMap.set(f, step.id);
+      for (const f of outputs) {
+        if (!outputMap.has(f)) outputMap.set(f, []);
+        outputMap.get(f).push(step.id);
+      }
     }
   }
 
@@ -24,8 +82,16 @@ function buildDAG(steps) {
     if (!step.input) continue;
     const inputs = Array.isArray(step.input) ? step.input : [step.input];
     for (const f of inputs) {
-      const from = outputMap.get(f);
-      if (from && from !== step.id) edges.push([from, step.id]);
+      const producers = outputMap.get(f);
+      if (!producers) continue;
+      for (const from of producers) {
+        // Skip self-loop edges (handled by loop logic)
+        if (from === step.id) continue;
+        // Avoid duplicate edges
+        if (!edges.some(([a, b]) => a === from && b === step.id)) {
+          edges.push([from, step.id]);
+        }
+      }
     }
   }
 
@@ -183,17 +249,229 @@ function generatePlan(crewPath) {
   };
 }
 
+// ── Nested DAG Support ──
+
+function resolveNestedCrew(crewPath) {
+  const crewDef = require(path.resolve(crewPath));
+  const steps = [];
+  const nestedWarnings = [];
+
+  for (const step of (crewDef.steps || [])) {
+    if (step.crew) {
+      // Nested DAG: load child crew and prefix all step ids
+      const childCrewPath = path.resolve(path.dirname(crewPath), step.crew);
+      try {
+        const childDef = require(childCrewPath);
+        const childSteps = childDef.steps || [];
+        if (!childSteps.length) {
+          nestedWarnings.push(`⚠️  Nested crew "${step.crew}" has no steps, skipping`);
+          continue;
+        }
+        const prefix = step.id + '.';
+        const inputMapping = step.input ? (Array.isArray(step.input) ? step.input : [step.input]) : [];
+        const childWorkdir = step.workdir || (crewDef.workdir || `/tmp/crew-${crewDef.name}`) + '/' + step.id;
+
+        for (const cs of childSteps) {
+          const nestedStep = { ...cs, id: prefix + cs.id };
+          // Map external inputs to child's first steps
+          if (inputMapping.length > 0 && !cs.input) {
+            nestedStep.input = inputMapping;
+          }
+          // Map child outputs back through parent output
+          if (step.output && cs.output === childSteps[childSteps.length - 1]?.output) {
+            nestedStep.output = step.output;
+          }
+          nestedStep._nestedWorkdir = childWorkdir;
+          nestedStep._parentId = step.id;
+          steps.push(nestedStep);
+        }
+        nestedWarnings.push(`📦 Expanded nested crew "${step.crew}" → ${childSteps.length} steps (prefix: ${prefix})`);
+      } catch (e) {
+        nestedWarnings.push(`⚠️  Failed to load nested crew "${step.crew}": ${e.message}`);
+        // Fallback: keep as-is
+        steps.push(step);
+      }
+    } else {
+      steps.push(step);
+    }
+  }
+
+  return { ...crewDef, steps, _nestedWarnings: nestedWarnings };
+}
+
+// ── Loop Analysis ──
+
+function analyzeLoops(steps) {
+  const loopSteps = [];
+  for (const step of steps) {
+    if (!step.loop) continue;
+    const outputs = step.output ? (Array.isArray(step.output) ? step.output : [step.output]) : [];
+    const inputs = step.input ? (Array.isArray(step.input) ? step.input : [step.input]) : [];
+    // Detect self-loop: output file == input file
+    const selfLoop = outputs.some(o => inputs.includes(o));
+    loopSteps.push({
+      id: step.id,
+      max: step.loop.max || 5,
+      until: step.loop.until || 'quality acceptable',
+      selfLoop,
+      condition: step.loop.condition || null, // JS expression for programmatic check
+    });
+  }
+  return loopSteps;
+}
+
+// ── Approval Gate Analysis ──
+
+function analyzeApprovals(steps) {
+  return steps
+    .filter(s => s.await === 'human')
+    .map(s => ({
+      id: s.id,
+      cronAwait: s.cronAwait || false,
+      prompt: s.awaitPrompt || `审批请求：step "${s.id}" 已完成前置任务，是否继续？`,
+      timeout: s.awaitTimeout || null, // minutes, null = no timeout
+      inputs: s.input ? (Array.isArray(s.input) ? s.input : [s.input]) : [],
+    }));
+}
+
+// ── Execute Mode: Generate structured commands ──
+
+function generateCommands(crewPath) {
+  // Resolve nested DAGs first
+  const resolved = resolveNestedCrew(crewPath);
+  const steps = resolved.steps || [];
+  if (!steps.length) {
+    return { project: resolved.name, error: "No steps defined" };
+  }
+
+  const { nodes, edges } = buildDAG(steps);
+  const layers = topologicalSort(nodes, edges);
+  const mode = inferMode(steps, edges, resolved.mode);
+  const workdir = resolved.workdir || `/tmp/crew-${resolved.name}`;
+
+  // Advanced analysis
+  const loopAnalysis = analyzeLoops(steps);
+  const approvalAnalysis = analyzeApprovals(steps);
+
+  // Parameter validation
+  const registryPath = path.resolve(__dirname, '..', 'references', 'skill-registry.md');
+  const warnings = validateParams(steps, registryPath);
+  if (resolved._nestedWarnings) warnings.push(...resolved._nestedWarnings);
+
+  const commands = [];
+  for (let i = 0; i < layers.length; i++) {
+    for (const id of layers[i]) {
+      const step = nodes.get(id);
+      const inputs = step.input ? (Array.isArray(step.input) ? step.input : [step.input]) : [];
+      const outputs = step.output ? (Array.isArray(step.output) ? step.output : [step.output]) : [];
+
+      // Build human-readable instruction
+      const paramStr = step.params ? ' ' + Object.entries(step.params).map(([k, v]) => `${k}='${v}'`).join(', ') : '';
+      const inputStr = inputs.length > 0 ? `，读取 ${inputs.join(', ')}` : '';
+      const outputStr = outputs.length > 0 ? `，输出到 ${outputs.join(', ')}` : '';
+      const instruction = step.crew
+        ? `展开嵌套 DAG: ${step.crew}${paramStr}${inputStr}${outputStr}`
+        : `使用 ${step.skill} skill${paramStr}${inputStr}${outputStr}`;
+
+      // Build validation hint
+      let validation = null;
+      if (outputs.length > 0) {
+        validation = `检查 ${outputs.join(', ')} 存在且非空`;
+      } else if (step.await === 'human') {
+        validation = '等待人工确认后继续';
+      }
+
+      const cmd = {
+        step: id,
+        layer: i,
+        instruction,
+        skillRef: step.skill || null,
+        params: step.params || {},
+        input: inputs.length > 0 ? inputs : null,
+        output: outputs.length > 0 ? outputs : null,
+        validation,
+      };
+
+      const retry = parseRetry(step);
+      if (retry.max > 0) cmd.retry = retry;
+      const fallback = parseFallback(step);
+      if (fallback) cmd.fallback = fallback;
+
+      // Approval gate metadata
+      if (step.await) {
+        const approval = approvalAnalysis.find(a => a.id === id);
+        cmd.await = {
+          type: 'human',
+          prompt: approval?.prompt,
+          cronSkip: !approval?.cronAwait,
+          timeout: approval?.timeout,
+          reviewFiles: approval?.inputs || [],
+        };
+      }
+
+      // Event loop metadata
+      const loopInfo = loopAnalysis.find(l => l.id === id);
+      if (loopInfo) {
+        cmd.loop = {
+          max: loopInfo.max,
+          until: loopInfo.until,
+          selfLoop: loopInfo.selfLoop,
+          condition: loopInfo.condition,
+        };
+        // For self-loop, update instruction to mention loop
+        if (loopInfo.selfLoop) {
+          cmd.instruction += `（循环执行，最多 ${loopInfo.max} 次，直到: ${loopInfo.until}）`;
+        }
+      }
+
+      if (step.timeout) cmd.timeout = step.timeout;
+      if (step._nestedWorkdir) cmd.nestedWorkdir = step._nestedWorkdir;
+      if (step._parentId) cmd.parentStep = step._parentId;
+
+      commands.push(cmd);
+    }
+  }
+
+  return {
+    project: resolved.name,
+    workdir,
+    inferredMode: mode,
+    totalSteps: commands.length,
+    totalLayers: layers.length,
+    commands,
+    warnings: warnings.length > 0 ? warnings : undefined,
+    // Advanced features summary
+    features: {
+      hasApproval: approvalAnalysis.length > 0,
+      hasLoop: loopAnalysis.length > 0,
+      hasNested: steps.some(s => s._parentId),
+      approvalGates: approvalAnalysis.length > 0 ? approvalAnalysis : undefined,
+      loopSteps: loopAnalysis.length > 0 ? loopAnalysis : undefined,
+    },
+    logTemplate: {
+      format: "[CREW] {{step}} | {{status}} | {{duration}}ms",
+      fields: ["step", "status", "duration"],
+      statuses: ["running", "success", "failed", "retrying", "fallback", "skipped", "awaiting_approval", "loop_iteration"],
+      example: "[CREW] search | success | 42000ms",
+    },
+  };
+}
+
 // ── CLI ──
 
-const crewPath = process.argv[2];
 if (!crewPath) {
-  console.error("Usage: node orchestrator.js <crew.js path>");
+  console.error("Usage: node orchestrator.js [--execute] <crew.js path>");
   process.exit(1);
 }
 
 try {
-  const plan = generatePlan(crewPath);
-  console.log(JSON.stringify(plan, null, 2));
+  if (executeMode) {
+    const result = generateCommands(crewPath);
+    console.log(JSON.stringify(result, null, 2));
+  } else {
+    const plan = generatePlan(crewPath);
+    console.log(JSON.stringify(plan, null, 2));
+  }
 } catch (e) {
   console.error(`Error: ${e.message}`);
   process.exit(1);

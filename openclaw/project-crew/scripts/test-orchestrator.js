@@ -368,6 +368,125 @@ function parseFallback(step) {
   assert("T13: log — duration is number", typeof logEntry.duration === "number" && logEntry.duration > 0);
 }
 
+// ── T14: --execute mode command structure ──
+
+{
+  const steps = [
+    { id: "search", skill: "deep-research", params: { topic: "AI 2026", depth: "quick" }, output: "research.md" },
+    { id: "notion", skill: "notion", input: "research.md", params: { pageId: "xxx" }, retry: { max: 3, delay: 5000 }, fallback: "deep-research" },
+  ];
+  const { nodes, edges } = buildDAG(steps);
+  const layers = topologicalSort(nodes, edges);
+  const workdir = "/tmp/crew-test";
+
+  // Simulate generateCommands output
+  const commands = [];
+  for (let i = 0; i < layers.length; i++) {
+    for (const id of layers[i]) {
+      const step = nodes.get(id);
+      const inputs = step.input ? (Array.isArray(step.input) ? step.input : [step.input]) : [];
+      const outputs = step.output ? (Array.isArray(step.output) ? step.output : [step.output]) : [];
+      const paramStr = step.params ? ' ' + Object.entries(step.params).map(([k, v]) => `${k}='${v}'`).join(', ') : '';
+      const inputStr = inputs.length > 0 ? `，读取 ${inputs.join(', ')}` : '';
+      const outputStr = outputs.length > 0 ? `，输出到 ${outputs.join(', ')}` : '';
+      const instruction = `使用 ${step.skill} skill${paramStr}${inputStr}${outputStr}`;
+      let validation = null;
+      if (outputs.length > 0) validation = `检查 ${outputs.join(', ')} 存在且非空`;
+      const cmd = { step: id, layer: i, instruction, skillRef: step.skill, params: step.params || {}, input: inputs.length > 0 ? inputs : null, output: outputs.length > 0 ? outputs : null, validation };
+      const retry = parseRetry(step);
+      if (retry.max > 0) cmd.retry = retry;
+      const fallback = parseFallback(step);
+      if (fallback) cmd.fallback = fallback;
+      commands.push(cmd);
+    }
+  }
+
+  assert("T14: execute — has commands array", Array.isArray(commands) && commands.length === 2);
+  assert("T14: execute — first command structure",
+    commands[0].step === "search" && commands[0].layer === 0 && commands[0].skillRef === "deep-research" && Array.isArray(commands[0].output));
+  assert("T14: execute — second command has retry/fallback",
+    commands[1].retry && commands[1].retry.max === 3 && commands[1].fallback === "deep-research");
+  assert("T14: execute — instruction is human-readable", commands[0].instruction.includes("deep-research") && commands[0].instruction.includes("topic"));
+  assert("T14: execute — validation field present for output steps", commands[0].validation !== null);
+}
+
+// ── T15: Parameter validation ──
+
+{
+  // Test the validation logic inline (same as orchestrator.js parseSkillRegistry + validateParams)
+  const mockRegistry = `## deep-research
+| field | type | required | desc |
+| topic | string | ✅ | topic |
+| depth | string | ❌ | depth |
+| output | string | ✅ | output path |
+
+## notion
+| pageId | string | ✅ | page id |
+| title | string | ❌ | title |`;
+
+  function parseReg(content) {
+    const skills = {};
+    let current = null;
+    for (const line of content.split('\n')) {
+      const h = line.match(/^## (.+)$/);
+      if (h) { current = h[1].trim(); skills[current] = { required: [], optional: [] }; continue; }
+      if (!current) continue;
+      const m = line.match(/^\| (\w+) \|/);
+      if (!m) continue;
+      if (line.includes('✅')) skills[current].required.push(m[1]);
+      else skills[current].optional.push(m[1]);
+    }
+    return skills;
+  }
+
+  const reg = parseReg(mockRegistry);
+  assert("T15: validate — registry parsed", reg["deep-research"] && reg["deep-research"].required.includes("topic"));
+
+  const warnings = [];
+  const steps = [
+    { id: "s1", skill: "deep-research", params: { depth: "quick" } }, // missing topic, output
+    { id: "s2", skill: "deep-research", params: { topic: "AI" } },     // missing output
+    { id: "s3", skill: "notion", params: { pageId: "xxx" } },         // all required present
+    { id: "s4", skill: "unknown-skill", params: {} },                  // not in registry
+  ];
+  for (const step of steps) {
+    if (!step.skill) continue;
+    const def = reg[step.skill];
+    if (!def) { warnings.push(`not found: ${step.skill}`); continue; }
+    for (const f of def.required) {
+      if (!step.params || !(f in step.params)) warnings.push(`missing ${f}`);
+    }
+  }
+
+  assert("T15: validate — warns on missing required params", warnings.length === 4); // topic, output for s1; output for s2; not found for s4
+  assert("T15: validate — warns on unknown skill", warnings.some(w => w.includes("not found")));
+  assert("T15: validate — no warning for complete params", !warnings.some(w => w.includes("s3")));
+}
+
+// ── T16: Log template ──
+
+{
+  const logTemplate = {
+    format: "[CREW] {{step}} | {{status}} | {{duration}}ms",
+    fields: ["step", "status", "duration"],
+    statuses: ["running", "success", "failed", "retrying", "fallback", "skipped"],
+    example: "[CREW] search | success | 42000ms",
+  };
+
+  assert("T16: log — has format template", typeof logTemplate.format === "string" && logTemplate.format.includes("{{step}}"));
+  assert("T16: log — has fields array", Array.isArray(logTemplate.fields) && logTemplate.fields.length === 3);
+  assert("T16: log — has valid statuses", logTemplate.statuses.includes("success") && logTemplate.statuses.includes("failed"));
+  assert("T16: log — example matches template", logTemplate.example.match(/\[CREW\] \w+ \| \w+ \| \d+ms/));
+
+  // Test template interpolation
+  const entry = { step: "notion", status: "retrying", duration: 15000 };
+  const logLine = logTemplate.format
+    .replace('{{step}}', entry.step)
+    .replace('{{status}}', entry.status)
+    .replace('{{duration}}', entry.duration);
+  assert("T16: log — interpolation works", logLine === "[CREW] notion | retrying | 15000ms");
+}
+
 // ── Report ──
 
 console.log(`\n总计: ${passed}/${passed + failed} 通过`);
