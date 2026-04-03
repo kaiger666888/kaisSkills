@@ -228,18 +228,19 @@ When spawning a sub-agent for compute work:
 
 ### Model Selection
 
-Read `config.json` at the skill root for model assignments. Default config:
+Read `config.json` at the skill root for model assignments. Actual values in config.json take precedence over any examples below.
 
-| Sub-Agent Task | Config Key | Default Model |
-|---------------|-----------|---------------|
-| Competitive/market research | `subAgent.model.research` | `current` (session model) |
-| Framework analysis (SWOT, etc.) | `subAgent.model.framework` | `claude-sonnet-4-20250514` |
-| Domain trend scanning | `subAgent.model.trends` | `current` |
-| Deep technical analysis | `subAgent.model.technical` | `claude-sonnet-4-20250514` |
+| Sub-Agent Task | Config Key | Example Default |
+|---------------|-----------|-----------------|
+| Competitive/market research | `subAgent.model.research` | `zai/glm-5-turbo` |
+| Framework analysis (SWOT, etc.) | `subAgent.model.framework` | `zai/glm-5.1` |
+| Domain trend scanning | `subAgent.model.trends` | `zai/glm-5-turbo` |
+| Deep technical analysis | `subAgent.model.technical` | `zai/glm-5.1` |
 
+- Use the value from `config.json` — do not hardcode model names in logic
 - `current` = use the main session's model
-- Any other value = spawn sub-agent with that model
-- To customize: edit `config.json` in the skill directory
+- Any provider-prefixed value (e.g., `zai/glm-5.1`) = spawn sub-agent with that model
+- To customize: edit `config.json` in the skill directory, no restart needed
 
 ### Important: Conversation Never Leaves Main Agent
 
