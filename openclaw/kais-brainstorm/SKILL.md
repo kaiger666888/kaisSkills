@@ -184,6 +184,58 @@ For detailed framework guides, see [references/frameworks.md](references/framewo
 
 **How to use:** Read [references/frameworks.md](references/frameworks.md) for the selected framework, apply it to the current idea, and integrate findings into the design.
 
+## Hybrid Architecture: Main Agent + Sub-Agent
+
+The brainstorm flow splits into **interactive phases** (main agent) and **compute phases** (sub-agent with optional stronger model). This keeps the conversation smooth while offloading heavy work.
+
+### When to Use Sub-Agent
+
+| Trigger | Sub-Agent Task | Suggested Model |
+|---------|---------------|-----------------|
+| Step 4 needs competitive/market research | Research competitors, pricing, market size | Current model or stronger |
+| Step 7B user chooses "Go deeper" | Apply analysis framework (SWOT, Pre-Mortem, etc.) | Stronger model recommended |
+| Cold Start "Scan trends" | Web search for trends in user's domain | Current model |
+| Any step needs deep technical analysis | Architecture evaluation, feasibility study | Stronger model recommended |
+
+### How It Works
+
+```
+Main Agent (对话层, 当前模型)          Sub-Agent (计算层, 可指定模型)
+    │                                      │
+    ├─ Steps 1-3: 探索/提问/范围检查         │
+    │                                      │
+    ├─ Step 4: 需要调研 ──────────────→ spawn(调研任务, model=?)
+    │   ←── 返回调研结果                     │
+    ├─ 整合结果，呈现方案（对话）              │
+    │                                      │
+    ├─ Step 5-6: 设计呈现（对话）              │
+    │                                      │
+    ├─ Step 7B: 框架分析 ─────────────→ spawn(框架分析, model=?)
+    │   ←── 返回分析结果                     │
+    ├─ 整合结果，继续对话确认                  │
+    │                                      │
+    └─ Step 7 A/C/D: 交付/实施/结束           │
+```
+
+### Sub-Agent Spawn Pattern
+
+When spawning a sub-agent for compute work:
+
+1. **Pack context** — include the design so far, the specific question, and which framework to apply
+2. **Set model** — use `model` parameter; default to current model, but for framework analysis recommend a stronger model (e.g., `claude-sonnet-4-20250514`)
+3. **Wait for result** — sub-agent completes and returns; do NOT poll, wait for push notification
+4. **Integrate** — present the sub-agent's findings to the user in the main conversation, then continue the interactive flow
+
+### Model Selection Guidelines
+
+- **Current model** (default): Cold Start trends scan, simple competitive research
+- **Stronger model** (recommended): SWOT, Pre-Mortem, First Principles, Lean Canvas — these benefit from deeper reasoning
+- **User override**: if the user says "用 claude brainstorm" or similar, respect the model preference
+
+### Important: Conversation Never Leaves Main Agent
+
+The user always interacts with the main agent. Sub-agents are invisible to the user — they see the result, not the process. Never spawn a sub-agent for anything that requires user interaction.
+
 ## Key Principles
 
 - **Ideas first, judgment later** — generate freely before evaluating
