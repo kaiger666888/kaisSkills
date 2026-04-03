@@ -1,0 +1,16 @@
+{
+  "subAgent": {
+    "model": {
+      "research": "current",
+      "framework": "claude-sonnet-4-20250514",
+      "trends": "current",
+      "technical": "claude-sonnet-4-20250514"
+    },
+    "description": {
+      "research": "Step 4: competitive/market research",
+      "framework": "Step 7B: analysis framework (SWOT, Pre-Mortem, etc.)",
+      "trends": "Cold Start: domain trend scanning",
+      "technical": "Deep technical analysis, architecture evaluation"
+    }
+  }
+}

@@ -226,11 +226,20 @@ When spawning a sub-agent for compute work:
 3. **Wait for result** — sub-agent completes and returns; do NOT poll, wait for push notification
 4. **Integrate** — present the sub-agent's findings to the user in the main conversation, then continue the interactive flow
 
-### Model Selection Guidelines
+### Model Selection
 
-- **Current model** (default): Cold Start trends scan, simple competitive research
-- **Stronger model** (recommended): SWOT, Pre-Mortem, First Principles, Lean Canvas — these benefit from deeper reasoning
-- **User override**: if the user says "用 claude brainstorm" or similar, respect the model preference
+Read `config.json` at the skill root for model assignments. Default config:
+
+| Sub-Agent Task | Config Key | Default Model |
+|---------------|-----------|---------------|
+| Competitive/market research | `subAgent.model.research` | `current` (session model) |
+| Framework analysis (SWOT, etc.) | `subAgent.model.framework` | `claude-sonnet-4-20250514` |
+| Domain trend scanning | `subAgent.model.trends` | `current` |
+| Deep technical analysis | `subAgent.model.technical` | `claude-sonnet-4-20250514` |
+
+- `current` = use the main session's model
+- Any other value = spawn sub-agent with that model
+- To customize: edit `config.json` in the skill directory
 
 ### Important: Conversation Never Leaves Main Agent
 
