@@ -230,6 +230,9 @@ When spawning a sub-agent for compute work:
 
 Read `config.json` at the skill root for model assignments. Actual values in config.json take precedence over any examples below.
 
+**Config path:** `skills/kais-brainstorm/config.json` (relative to workspace root)
+**Schema:** `{ "subAgent": { "model": { "<task>": "<model>" }, "description": { "<task>": "..." } } }`
+
 | Sub-Agent Task | Config Key | Example Default |
 |---------------|-----------|-----------------|
 | Competitive/market research | `subAgent.model.research` | `zai/glm-5-turbo` |
