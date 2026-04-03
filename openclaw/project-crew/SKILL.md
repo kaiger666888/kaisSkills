@@ -1,11 +1,13 @@
 ---
 name: project-crew
-description: Intelligent task orchestration system. "Graph is orchestration" — define skills with input/output dependencies, the orchestrator auto-analyzes the DAG and picks optimal execution strategy. Use when user says "run a crew", "orchestrate", "pipeline", "run project", "crew", or provides a multi-step workflow with skill dependencies. Supports pipeline, fan-out, map-reduce, approval gates, event loops, and nested DAG modes.
+description: Intelligent task orchestration and project lifecycle management. "Graph is orchestration" — define skills with input/output dependencies, auto-analyze DAG, pick optimal execution strategy. Supports pipeline, fan-out, map-reduce, approval gates, event loops, nested DAG, git worktree parallel development, checkpoint/resume, and evolutionary selection.
 ---
 
-# Project Crew — 智能任务编排
+# Project Crew — 智能任务编排与项目管理
 
 **核心理念：图即编排。** 定义 skill 之间的数据依赖，编排器自动推断最优执行策略。
+
+**扩展能力：项目即仓库。** 自动创建 Git 仓库，支持并行 worktree 开发、检查点回溯、优胜劣汰。
 
 ## 快速开始
 
@@ -34,11 +36,42 @@ description: Intelligent task orchestration system. "Graph is orchestration" —
 ```js
 module.exports = {
   name: "项目名称",           // 必填
+  goal: "项目目标描述",       // 推荐，用于 README 和方向判断
   workdir: "/tmp/crew-xxx",  // 可选，默认 /tmp/crew-<name>/
   env: { KEY: "value" },     // 可选，注入环境变量
   steps: [...]               // 必填，step 数组
 };
 ```
+
+### 项目管理字段（扩展）
+
+```js
+module.exports = {
+  name: "ai-code-review",
+  goal: "自动化代码审查系统",
+  workdir: "/tmp/crew-ai-review",
+
+  // ── 项目引导 ──
+  project: {
+    lang: "node",                    // 语言（node/python/rust/go/general）
+    lfs: ["*.onnx", "*.gguf"],      // Git LFS 跟踪模式（可选）
+  },
+
+  // ── 并行开发 ──
+  worktrees: 3,                      // 创建 3 个并行 worktree（默认 2）
+  evolveStrategy: "best-output",     // 优胜劣汰策略（best-output/most-commits）
+
+  steps: [...]
+};
+```
+
+| 字段 | 说明 |
+|------|------|
+| `goal` | 项目目标，写入 README，指导方向判断 |
+| `project.lang` | 编程语言，自动生成对应 .gitignore |
+| `project.lfs` | LFS 文件模式列表，自动配置 git-lfs |
+| `worktrees` | 并行开发副本数，每个是独立 git worktree |
+| `evolveStrategy` | 评估策略：`best-output`（输出质量）或 `most-commits`（迭代次数） |
 
 ### Step 定义
 
@@ -276,6 +309,158 @@ deliver: telegram -1003840246680
 - `references/patterns.md` — 执行模式详解与示例
 - `references/skill-registry.md` — 常用 skill 参数格式与执行方式
 
+## 项目生命周期管理（✨ 高级）
+
+### 生命周期概览
+
+```
+1. Bootstrap → 创建 Git 仓库、.gitignore、LFS、目录结构
+2. Worktrees → 创建 N 个并行开发副本
+3. Execute   → 每个 worktree 独立执行 DAG，每步自动 commit（checkpoint）
+4. Checkpoint → 关键节点自动保存快照
+5. Evolve    → 对比各 worktree 产出，优胜劣汰
+6. Merge     → 合并最佳分支到 main
+```
+
+### 项目引导（Bootstrap）
+
+```bash
+node scripts/project-manager.js --bootstrap crew.js
+```
+
+自动完成：
+- `git init` + main/dev 分支
+- 根据语言生成 `.gitignore`（node/python/rust/go/general）
+- 配置 Git LFS（如果定义了 `lfs` 模式）
+- 根据 steps 的 output 字段创建目录结构
+- 生成 `README.md`（含项目目标和结构说明）
+- 初始 commit
+
+### 并行开发（Worktrees）
+
+```bash
+# 创建 3 个并行 worktree
+node scripts/project-manager.js --worktrees crew.js
+```
+
+每个 worktree 是一个独立的 Git worktree：
+- 独立分支（`wt-01`, `wt-02`, `wt-03`）
+- 独立工作目录
+- 各自包含 `crew.js` 副本
+- 互不干扰，可并行执行 DAG
+
+**AI 执行流程：**
+1. 运行 `--worktrees` 获取 worktree 路径
+2. 对每个 worktree 并行 spawn sub-agent
+3. 每个 sub-agent 在各自 worktree 中执行 `--execute` 的 commands
+4. 每完成一个 step，运行 `--checkpoint` 保存进度
+
+### 检查点（Checkpoint）
+
+```bash
+# 自动检查点（每步完成后）
+node scripts/project-manager.js --checkpoint crew.js --step "research" --message "research step completed"
+
+# 手动检查点
+node scripts/project-manager.js --checkpoint crew.js
+```
+
+每个检查点 = 一个 git commit，包含：
+- step id（在 commit message 中）
+- 时间戳
+- 当前所有文件状态
+
+### 状态查看（Status）
+
+```bash
+node scripts/project-manager.js --status crew.js
+```
+
+输出：
+- 当前分支
+- 最近 20 个检查点（commit log）
+- 所有 worktree 列表
+- 并行开发配置
+
+### 回溯（Rollback）
+
+```bash
+# 回到某个检查点
+node scripts/project-manager.js --rollback crew.js --to abc1234
+```
+
+安全机制：
+- 回溯前自动创建 `recovery-<timestamp>` 分支
+- 不会丢失当前进度
+- 可随时从 recovery 分支恢复
+
+### 优胜劣汰（Evolve）
+
+```bash
+node scripts/project-manager.js --evolve crew.js
+```
+
+评估每个 worktree：
+- 检查所有 output 文件是否存在
+- 按文件大小/质量打分
+- 保留得分 ≥ 最佳 80% 的 worktree（survive）
+- 淘汰其余（prune）
+- 输出排名和淘汰建议
+
+### 合并（Merge）
+
+```bash
+node scripts/project-manager.js --merge crew.js
+```
+
+自动：
+1. 运行 evolve 找到最佳 worktree
+2. 切换到 main 分支
+3. 合并最佳分支
+
+### 完整示例：并行开发 AI 项目
+
+```js
+// crew.js
+module.exports = {
+  name: "ai-research-tool",
+  goal: "构建一个 AI 驱动的研究工具",
+  project: { lang: "node", lfs: ["*.gguf", "*.onnx"] },
+  worktrees: 3,                    // 3 个并行开发副本
+  evolveStrategy: "best-output",
+  steps: [
+    { id: "design", skill: "deep-research", params: { topic: "AI research tools", depth: "medium" }, output: "design.md" },
+    { id: "implement", skill: "coding-agent", input: "design.md", output: "src/index.js" },
+    { id: "test", skill: "coding-agent", input: "src/index.js", output: "test-results.md", loop: { max: 3, until: "所有测试通过" } },
+    { id: "docs", skill: "general", input: ["design.md", "test-results.md"], output: "README.md" }
+  ]
+};
+```
+
+**执行流程：**
+```
+1. --bootstrap → 创建仓库 + .gitignore(node) + LFS(*.gguf,*.onnx) + src/ 目录
+2. --worktrees 3 → 创建 wt-01, wt-02, wt-03 三个并行副本
+3. 在每个 worktree 中：
+   a. design → --checkpoint → implement → --checkpoint → test(loop) → --checkpoint → docs
+   b. 每个 checkpoint 是一个 git commit
+4. --evolve → 对比 3 个 worktree 的 src/index.js + test-results.md + README.md
+5. --merge → 合并最佳分支到 main
+```
+
+### 断点续开
+
+当某个 worktree 在 test step 失败时：
+```bash
+# 查看状态
+node scripts/project-manager.js --status crew.js
+
+# 回溯到 test 之前
+node scripts/project-manager.js --rollback crew.js --to <implement-checkpoint-hash>
+
+# 修改策略后继续执行 test 及后续步骤
+```
+
 ## 编排器 CLI
 
 ```bash
@@ -338,6 +523,18 @@ node scripts/orchestrator.js --execute /path/to/crew.js
 ### 参数校验
 
 `--execute` 模式自动检查每个 step 的必填参数是否齐全，缺失时在 `warnings` 数组中输出警告。参数定义来自 `references/skill-registry.md`。
+
+## 项目管理 CLI
+
+```bash
+node scripts/project-manager.js --bootstrap <crew.js>    # 创建仓库
+node scripts/project-manager.js --worktrees <crew.js>    # 创建并行 worktree
+node scripts/project-manager.js --checkpoint <crew.js>   # 保存检查点
+node scripts/project-manager.js --status <crew.js>       # 查看状态
+node scripts/project-manager.js --rollback <crew.js> --to <commit>  # 回溯
+node scripts/project-manager.js --evolve <crew.js>       # 优胜劣汰
+node scripts/project-manager.js --merge <crew.js>        # 合并最佳
+```
 
 ### 执行日志
 
