@@ -75,17 +75,21 @@ module.exports = {
 ### 模式推断算法
 
 ```
-1. 解析所有 step，收集 id → { inputs, outputs }
+1. 解析所有 step，收集 id → { inputs, outputs, hasLoop }
 2. 对每个 step，将 input 文件名解析为来源 step id
 3. 构建邻接表：step.id → [依赖的 step.id]
 4. 检测环：DFS 回溯 → 标记为 event-loop 模式
-5. 统计入度：
-   - 所有 step 入度 ≤ 1 且串行 → pipeline
+   - 注意：自环（同一文件 input+output）需通过 loop 字段辅助检测
+5. 检查 await:"human" → 标记为 approval
+6. 统计拓扑特征：
+   - 有 step 的 outDegree > 1（单源扇出）→ fan-out
+   - 有多个起始节点（入度=0）→ fan-out
    - 有 step 入度 > 1（汇合点）→ map-reduce
-   - 有 step 入度 = 0（多个起始）→ fan-out
-   - 有 await:"human" → approval
+   - 所有 step 入度 ≤ 1 且全串行 → pipeline
+   - 有 loop 字段 → event-loop
    - 其他 → dag（通用拓扑排序）
-6. 同一图中不同子图可独立使用不同模式
+7. 用户通过 step.mode 可覆盖自动推断
+8. 同一图中不同子图可独立使用不同模式
 ```
 
 ## 编排执行流程

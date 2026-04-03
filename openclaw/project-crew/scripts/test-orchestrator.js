@@ -1,0 +1,313 @@
+#!/usr/bin/env node
+// project-crew orchestrator logic tests
+// Implements: DAG build, cycle detection, mode inference, topological sort, error handling
+
+// ── Orchestrator core (from references/orchestrator.md) ──
+
+function buildDAG(steps) {
+  const nodes = new Map();
+  const edges = [];
+  const outputMap = new Map();
+
+  for (const step of steps) {
+    nodes.set(step.id, step);
+    if (step.output) {
+      const outputs = Array.isArray(step.output) ? step.output : [step.output];
+      for (const f of outputs) outputMap.set(f, step.id);
+    }
+  }
+
+  for (const step of steps) {
+    if (!step.input) continue;
+    const inputs = Array.isArray(step.input) ? step.input : [step.input];
+    for (const f of inputs) {
+      const from = outputMap.get(f);
+      if (from && from !== step.id) edges.push([from, step.id]);
+    }
+  }
+
+  return { nodes, edges };
+}
+
+function detectCycle(nodes, edges) {
+  const WHITE = 0, GRAY = 1, BLACK = 2;
+  const color = new Map([...nodes.keys()].map(k => [k, WHITE]));
+
+  function dfs(node) {
+    color.set(node, GRAY);
+    for (const [from, to] of edges) {
+      if (from !== node) continue;
+      if (color.get(to) === GRAY) return true;
+      if (color.get(to) === WHITE && dfs(to)) return true;
+    }
+    color.set(node, BLACK);
+    return false;
+  }
+
+  return [...nodes.keys()].some(id => color.get(id) === WHITE && dfs(id));
+}
+
+function countInDegree(nodes, edges) {
+  const deg = new Map([...nodes.keys()].map(k => [k, 0]));
+  for (const [, to] of edges) deg.set(to, deg.get(to) + 1);
+  return deg;
+}
+
+function countOutDegree(nodes, edges) {
+  const deg = new Map([...nodes.keys()].map(k => [k, 0]));
+  for (const [from] of edges) deg.set(from, deg.get(from) + 1);
+  return deg;
+}
+
+function topologicalSort(nodes, edges) {
+  const inDegree = countInDegree(nodes, edges);
+  const queue = [...inDegree.entries()].filter(([, d]) => d === 0).map(([id]) => id);
+  const layers = [];
+
+  while (queue.length) {
+    layers.push([...queue]);
+    const next = [];
+    for (const id of queue) {
+      for (const [from, to] of edges) {
+        if (from !== id) continue;
+        inDegree.set(to, inDegree.get(to) - 1);
+        if (inDegree.get(to) === 0) next.push(to);
+      }
+    }
+    queue.length = 0;
+    queue.push(...next);
+  }
+
+  return layers;
+}
+
+function inferMode(steps, edges, explicitMode) {
+  if (explicitMode) return explicitMode;
+
+  const { nodes } = buildDAG(steps);
+
+  if (steps.some(s => s.await === 'human')) return 'approval';
+  if (detectCycle(nodes, edges)) return 'event-loop';
+  if (steps.some(s => s.loop)) return 'event-loop';
+
+  const layers = topologicalSort(nodes, edges);
+  const inDeg = countInDegree(nodes, edges);
+  const outDeg = countOutDegree(nodes, edges);
+
+  const startNodes = [...inDeg.entries()].filter(([, d]) => d === 0).length;
+  const endNodes = [...outDeg.entries()].filter(([, d]) => d === 0).length;
+  const mergeNodes = [...inDeg.entries()].filter(([, d]) => d > 1).length;
+  const forkNodes = [...outDeg.entries()].filter(([, d]) => d > 1).length;
+
+  // pipeline: fully serial chain
+  if (steps.length === layers.length && steps.length > 1) return 'pipeline';
+
+  // fan-out: single start fans to multiple, or any node has outDegree > 1
+  // but only if it's a simple fan structure (no merge + fork mixing)
+  if ((startNodes === 1 && forkNodes > 0 && mergeNodes === 0) ||
+      (startNodes > 1 && mergeNodes === 0 && forkNodes === 0)) {
+    return 'fan-out';
+  }
+
+  // map-reduce: multiple sources converge to one point
+  if (mergeNodes > 0 && forkNodes === 0) {
+    return 'map-reduce';
+  }
+
+  // dag: complex graph with mixed patterns
+  return 'dag';
+}
+
+// ── Test harness ──
+
+let passed = 0, failed = 0;
+function assert(label, condition, detail) {
+  if (condition) {
+    passed++;
+    console.log(`✅ ${label}`);
+  } else {
+    failed++;
+    console.log(`❌ ${label}${detail ? ' — ' + detail : ''}`);
+  }
+}
+
+// ── T01: Pipeline ──
+
+{
+  const steps = [
+    { id: "a", skill: "s1", output: "a.md" },
+    { id: "b", skill: "s2", input: "a.md", output: "b.md" },
+    { id: "c", skill: "s3", input: "b.md" },
+  ];
+  const { nodes, edges } = buildDAG(steps);
+  const mode = inferMode(steps, edges);
+  const layers = topologicalSort(nodes, edges);
+
+  assert("T01: pipeline — DAG edges", edges.length === 2 && edges[0][1] === "b" && edges[1][1] === "c");
+  assert("T01: pipeline — mode", mode === "pipeline", `got ${mode}`);
+  assert("T01: pipeline — layers sequential", layers.length === 3 && layers.every(l => l.length === 1));
+}
+
+// ── T02: Fan-out ──
+
+{
+  const steps = [
+    { id: "a", skill: "s1", output: "brief.md" },
+    { id: "b", skill: "s2", input: "brief.md" },
+    { id: "c", skill: "s3", input: "brief.md" },
+    { id: "d", skill: "s4", input: "brief.md" },
+  ];
+  const { nodes, edges } = buildDAG(steps);
+  const mode = inferMode(steps, edges);
+  const layers = topologicalSort(nodes, edges);
+
+  assert("T02: fan-out — edges", edges.length === 3, `got ${edges.length}`);
+  assert("T02: fan-out — mode", mode === "fan-out", `got ${mode}`);
+  assert("T02: fan-out — parallel layer", layers[1].length === 3, `got ${layers[1]?.length}`);
+}
+
+// ── T03: Map-reduce ──
+
+{
+  const steps = [
+    { id: "a", skill: "s1", output: "a.md" },
+    { id: "b", skill: "s2", output: "b.md" },
+    { id: "c", skill: "s3", output: "c.md" },
+    { id: "d", skill: "s4", input: ["a.md", "b.md", "c.md"] },
+  ];
+  const { nodes, edges } = buildDAG(steps);
+  const mode = inferMode(steps, edges);
+  const layers = topologicalSort(nodes, edges);
+
+  assert("T03: map-reduce — edges", edges.length === 3, `got ${edges.length}`);
+  assert("T03: map-reduce — mode", mode === "map-reduce", `got ${mode}`);
+  assert("T03: map-reduce — merge in layer 2", layers[1].length === 1, `got ${layers[1]?.length}`);
+}
+
+// ── T04: Approval ──
+
+{
+  const steps = [
+    { id: "draft", skill: "s1", output: "draft.md" },
+    { id: "review", input: "draft.md", await: "human" },
+    { id: "publish", skill: "s3", input: "draft.md" },
+  ];
+  const { edges } = buildDAG(steps);
+  const mode = inferMode(steps, edges);
+  const hasApproval = steps.some(s => s.await === "human");
+
+  assert("T04: approval — has await human", hasApproval);
+  assert("T04: approval — mode", mode === "approval", `got ${mode}`);
+}
+
+// ── T05: Event-loop ──
+
+{
+  const steps = [
+    { id: "draft", skill: "s1", output: "v1.md" },
+    { id: "review", input: "v1.md", output: "v1.md", loop: { max: 5, until: "quality >= 8" } },
+  ];
+  const { nodes, edges } = buildDAG(steps);
+  const hasLoop = steps.some(s => s.loop);
+  const mode = inferMode(steps, edges);
+
+  assert("T05: event-loop — has loop config", hasLoop);
+  // Self-loop (same file as input+output) is implicit cycle; detected via loop flag
+  assert("T05: event-loop — mode", mode === "event-loop", `got ${mode}`);
+}
+
+// ── T06: Complex DAG (nested patterns) ──
+
+{
+  const steps = [
+    { id: "a", skill: "s1", output: "a.md" },
+    { id: "b", skill: "s2", input: "a.md", output: "b.md" },
+    { id: "c", skill: "s3", input: "a.md", output: "c.png" },
+    { id: "d", skill: "s4", output: "d.md" },
+    { id: "e", skill: "s5", input: ["b.md", "c.png"], output: "e.md" },
+    { id: "f", skill: "s6", input: ["e.md", "d.md"] },
+  ];
+  const { nodes, edges } = buildDAG(steps);
+  const layers = topologicalSort(nodes, edges);
+  const mode = inferMode(steps, edges);
+
+  const expectedLayers = [["a", "d"], ["b", "c"], ["e"], ["f"]];
+  const layersMatch = layers.length === 4 &&
+    layers[0].sort().join() === expectedLayers[0].sort().join() &&
+    layers[1].sort().join() === expectedLayers[1].sort().join() &&
+    layers[2].join() === expectedLayers[2].join() &&
+    layers[3].join() === expectedLayers[3].join();
+
+  assert("T06: DAG — mode", mode === "dag", `got ${mode}`);
+  assert("T06: DAG — topological layers correct", layersMatch,
+    `got ${JSON.stringify(layers)}`);
+}
+
+// ── T07: Empty steps ──
+
+{
+  let error = null;
+  try {
+    const steps = [];
+    const { nodes, edges } = buildDAG(steps);
+    const mode = inferMode(steps, edges);
+    // Should not crash; mode for empty graph is undefined/edge case
+    assert("T07: empty steps — no crash", true);
+  } catch (e) {
+    assert("T07: empty steps — no crash", false, e.message);
+  }
+}
+
+// ── T08: Cycle without loop marker ──
+
+{
+  const steps = [
+    { id: "a", skill: "s1", output: "x.md", input: "z.md" },
+    { id: "b", skill: "s2", output: "z.md", input: "x.md" },
+  ];
+  const { nodes, edges } = buildDAG(steps);
+  const cycleDetected = detectCycle(nodes, edges);
+  const mode = inferMode(steps, edges);
+
+  assert("T08: cycle detection — detected", cycleDetected);
+  assert("T08: cycle detection — mode event-loop", mode === "event-loop", `got ${mode}`);
+}
+
+// ── T09: Input references non-existent output ──
+
+{
+  let error = null;
+  try {
+    const steps = [
+      { id: "a", skill: "s1", output: "a.md" },
+      { id: "b", skill: "s2", input: "nonexistent.md" },
+    ];
+    const { nodes, edges } = buildDAG(steps);
+    // Should not crash; nonexistent input simply doesn't create an edge
+    assert("T09: invalid ref — no crash", true);
+    assert("T09: invalid ref — no edge created", edges.length === 0, `got ${edges.length}`);
+  } catch (e) {
+    assert("T09: invalid ref — no crash", false, e.message);
+  }
+}
+
+// ── T10: Explicit mode override ──
+
+{
+  const steps = [
+    { id: "a", skill: "s1", output: "a.md" },
+    { id: "b", skill: "s2", input: "a.md" },
+    { id: "c", skill: "s3", input: "a.md" },
+  ];
+  const { edges } = buildDAG(steps);
+  const autoMode = inferMode(steps, edges, null);
+  const overrideMode = inferMode(steps, edges, "pipeline");
+
+  assert("T10: auto mode is fan-out", autoMode === "fan-out", `got ${autoMode}`);
+  assert("T10: explicit override wins", overrideMode === "pipeline", `got ${overrideMode}`);
+}
+
+// ── Report ──
+
+console.log(`\n总计: ${passed}/${passed + failed} 通过`);
+if (failed > 0) process.exit(1);
