@@ -36,6 +36,9 @@ function parseSkillRegistry(registryPath) {
   return skills;
 }
 
+// Step-level fields that are NOT skill params
+const STEP_LEVEL_FIELDS = new Set(['id', 'skill', 'input', 'output', 'mode', 'await', 'loop', 'timeout', 'retry', 'fallback', 'parallel', 'crew', 'workdir', 'awaitPrompt', 'awaitTimeout', 'cronAwait']);
+
 function validateParams(steps, registryPath) {
   const warnings = [];
   try {
@@ -47,7 +50,9 @@ function validateParams(steps, registryPath) {
         warnings.push(`⚠️  Step "${step.id}": skill "${step.skill}" not found in registry`);
         continue;
       }
+      // Check params for required skill fields, but skip step-level fields
       for (const field of skillDef.required) {
+        if (STEP_LEVEL_FIELDS.has(field)) continue; // skip step-level fields like 'output'
         if (!step.params || !(field in step.params)) {
           warnings.push(`⚠️  Step "${step.id}": missing required param "${field}" for skill "${step.skill}"`);
         }
@@ -148,11 +153,13 @@ function countOutDegree(nodes, edges) {
 }
 
 function inferMode(steps, edges, explicitMode) {
-  if (explicitMode) return explicitMode;
+  if (explicitMode) return [explicitMode];
   const { nodes } = buildDAG(steps);
-  if (steps.some(s => s.await === 'human')) return 'approval';
-  if (detectCycle(nodes, edges)) return 'event-loop';
-  if (steps.some(s => s.loop)) return 'event-loop';
+  const tags = [];
+
+  // Structural tags
+  if (detectCycle(nodes, edges)) tags.push('event-loop');
+  else if (steps.some(s => s.loop)) tags.push('event-loop');
 
   const layers = topologicalSort(nodes, edges);
   const inDeg = countInDegree(nodes, edges);
@@ -161,11 +168,17 @@ function inferMode(steps, edges, explicitMode) {
   const mergeNodes = [...inDeg.entries()].filter(([, d]) => d > 1).length;
   const forkNodes = [...outDeg.entries()].filter(([, d]) => d > 1).length;
 
-  if (steps.length === layers.length && steps.length > 1) return 'pipeline';
-  if ((startNodes === 1 && forkNodes > 0 && mergeNodes === 0) ||
-      (startNodes > 1 && mergeNodes === 0 && forkNodes === 0)) return 'fan-out';
-  if (mergeNodes > 0 && forkNodes === 0) return 'map-reduce';
-  return 'dag';
+  if (steps.length === layers.length && steps.length > 1) tags.push('pipeline');
+  else if ((startNodes === 1 && forkNodes > 0 && mergeNodes === 0) ||
+           (startNodes > 1 && mergeNodes === 0 && forkNodes === 0)) tags.push('fan-out');
+  else if (mergeNodes > 0 && forkNodes === 0) tags.push('map-reduce');
+  else tags.push('dag');
+
+  // Feature tags
+  if (steps.some(s => s.await === 'human')) tags.push('approval');
+  if (steps.some(s => s.crew)) tags.push('nested');
+
+  return tags;
 }
 
 // ── Retry / Fallback / Log ──
@@ -212,7 +225,7 @@ function generatePlan(crewPath) {
       if (fallback) stepInfo.fallback = fallback;
       return stepInfo;
     }),
-    mode: i === 0 ? 'start' : mode,
+    mode: i === 0 ? 'start' : (Array.isArray(mode) ? mode.join('+') : mode),
   }));
 
   // Build step configs for each step (retry, fallback)
@@ -230,7 +243,7 @@ function generatePlan(crewPath) {
   return {
     project: crewDef.name,
     workdir: crewDef.workdir || `/tmp/crew-${crewDef.name}`,
-    inferredMode: mode,
+    inferredMode: Array.isArray(mode) ? mode : [mode],
     executionPlan,
     dependencies: deps,
     stepConfigs: Object.keys(stepConfigs).length > 0 ? stepConfigs : undefined,
@@ -435,11 +448,19 @@ function generateCommands(crewPath) {
   return {
     project: resolved.name,
     workdir,
-    inferredMode: mode,
+    inferredMode: Array.isArray(mode) ? mode : [mode],
     totalSteps: commands.length,
     totalLayers: layers.length,
     commands,
     warnings: warnings.length > 0 ? warnings : undefined,
+    // Layer-level parallel limits
+    layerLimits: layers.map(layer => {
+      const minParallel = Math.min(...layer.map(id => {
+        const step = nodes.get(id);
+        return step.parallel || Infinity;
+      }));
+      return { layer: null, steps: layer, maxParallel: minParallel === Infinity ? null : minParallel };
+    }).map((l, i) => ({ ...l, layer: i })),
     // Advanced features summary
     features: {
       hasApproval: approvalAnalysis.length > 0,
