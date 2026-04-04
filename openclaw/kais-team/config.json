@@ -1,0 +1,16 @@
+{
+  "subAgent": {
+    "model": {
+      "research": "zai/glm-5-turbo",
+      "framework": "zai/glm-5.1",
+      "analysis": "zai/glm-5.1",
+      "technical": "zai/glm-5.1"
+    },
+    "description": {
+      "research": "Requirement analysis: competitive/market research",
+      "framework": "Architecture analysis: SWOT, Pre-Mortem, etc.",
+      "analysis": "Deep analysis: risk assessment, feasibility study",
+      "technical": "Technical evaluation: architecture review"
+    }
+  }
+}

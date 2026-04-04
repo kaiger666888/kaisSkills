@@ -1,0 +1,56 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "title": "KaisTeam Project State",
+  "description": "State file for kais-team project tracking. Stored at projects/<name>/state.json",
+  "type": "object",
+  "required": ["project", "phase", "team", "tasks", "checkpoints", "createdAt", "lastActive"],
+  "properties": {
+    "project": {
+      "type": "string",
+      "description": "Project name (kebab-case)"
+    },
+    "phase": {
+      "type": "string",
+      "enum": ["analyzing", "forming_team", "planning", "executing", "delivering", "completed"],
+      "description": "Current project phase"
+    },
+    "goal": {
+      "type": "string",
+      "description": "Original user goal/description"
+    },
+    "team": {
+      "type": "array",
+      "items": { "type": "string" },
+      "description": "List of skill names assigned to this project"
+    },
+    "tasks": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "required": ["id", "status", "skill", "description", "timestamp"],
+        "properties": {
+          "id": { "type": "string", "description": "Task ID (t1, t2, ...)" },
+          "status": { "type": "string", "enum": ["pending", "running", "done", "failed", "blocked"] },
+          "skill": { "type": "string", "description": "Assigned skill name" },
+          "description": { "type": "string" },
+          "output": { "type": "string", "description": "Summary of task output" },
+          "artifactHash": { "type": "string", "description": "SHA256 hash of primary artifact" },
+          "contextSnapshot": { "type": "string", "description": "Context for interrupt recovery (set on running tasks)" },
+          "dependsOn": { "type": "array", "items": { "type": "string" }, "description": "Task IDs this depends on" },
+          "timestamp": { "type": "string", "format": "date-time" }
+        }
+      }
+    },
+    "checkpoints": {
+      "type": "array",
+      "items": { "type": "string" },
+      "description": "Completed checkpoints: team_confirmed, plan_approved, delivery_accepted"
+    },
+    "contextSnapshot": {
+      "type": "string",
+      "description": "Global context snapshot for recovery (updated each phase transition)"
+    },
+    "createdAt": { "type": "string", "format": "date-time" },
+    "lastActive": { "type": "string", "format": "date-time" }
+  }
+}
