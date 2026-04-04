@@ -1,9 +1,9 @@
 ---
-name: project-crew
+name: kais-pilot
 description: "Intelligent task orchestration and project lifecycle management. Graph is orchestration — define skills with input/output dependencies, auto-analyze DAG, pick optimal execution strategy. Supports pipeline, fan-out, map-reduce, approval gates, event loops, nested DAG, git worktree parallel development, checkpoint/resume, and evolutionary selection. Smart Mode: automatic team assembly and crew.js generation from natural language goals. Use when user says 全自动模式, autopilot, 别问我了全搞定, 帮我做一个项目, 开干, 拉个团队, build this, or presents a multi-step goal without providing crew.js."
 ---
 
-# Project Crew — 智能任务编排与项目管理
+# Kai's Pilot — 智能任务编排与项目管理
 
 **核心理念：图即编排。** 定义 skill 之间的数据依赖，编排器自动推断最优执行策略。
 
@@ -11,7 +11,7 @@ description: "Intelligent task orchestration and project lifecycle management. G
 
 ## 智能模式（Smart Mode）
 
-当用户**没有提供 crew.js**，而是直接说出一个目标时，project-crew 进入智能模式。
+当用户**没有提供 crew.js**，而是直接说出一个目标时，kais-pilot 进入智能模式。
 当用户**同时提供了 crew.js 和目标**时，进入**参考模式**：以现有 crew.js 为基础，分析用户的新目标，优化或扩展 crew.js（如添加新步骤、调整依赖、开启 evolve 等），然后执行。
 智能模式与现有的 crew.js 手动模式**共存互不干扰**——智能模式最终会自动生成 crew.js，然后复用现有执行引擎的**全部能力**：DAG 分析、并行执行、进化选择、循环验证、Git worktree、checkpoint/resume。
 
@@ -695,7 +695,7 @@ evolve: { criteria: "代码可读性、错误处理、性能" }
 
 ```
 cron: 0 8 * * *
-task: 读取 /tmp/crew-daily-research/crew.js 并按 project-crew 流程编排执行
+task: 读取 /tmp/crew-daily-research/crew.js 并按 kais-pilot 流程编排执行
 deliver: telegram -1003840246680
 ```
 
