@@ -3,7 +3,7 @@
   "title": "KaisTeam Project State",
   "description": "State file for kais-team project tracking. Stored at projects/<name>/state.json",
   "type": "object",
-  "required": ["project", "phase", "team", "tasks", "checkpoints", "createdAt", "lastActive"],
+  "required": ["project", "phase", "team", "tasks", "checkpoints", "createdAt", "lastActive", "updatedAt"],
   "properties": {
     "project": {
       "type": "string",
@@ -34,8 +34,9 @@
           "skill": { "type": "string", "description": "Assigned skill name" },
           "description": { "type": "string" },
           "output": { "type": "string", "description": "Summary of task output" },
-          "artifactHash": { "type": "string", "description": "SHA256 hash of primary artifact" },
-          "contextSnapshot": { "type": "string", "description": "Context for interrupt recovery (set on running tasks)" },
+          "artifactHash": { "type": "string", "description": "SHA256 hash of primary artifact (mandatory when task produces files)" },
+          "validationError": { "type": "string", "description": "Failure reason when status is 'failed' or 'blocked'" },
+          "contextSnapshot": { "type": "string", "description": "Context for interrupt recovery (set on running tasks). Format: { step, outputs, pendingDecisions }" },
           "dependsOn": { "type": "array", "items": { "type": "string" }, "description": "Task IDs this depends on" },
           "timestamp": { "type": "string", "format": "date-time" }
         }
@@ -48,9 +49,10 @@
     },
     "contextSnapshot": {
       "type": "string",
-      "description": "Global context snapshot for recovery (updated each phase transition)"
+      "description": "Global context snapshot for recovery (updated each phase transition). Format: { step, outputs, pendingDecisions }"
     },
     "createdAt": { "type": "string", "format": "date-time" },
-    "lastActive": { "type": "string", "format": "date-time" }
+    "updatedAt": { "type": "string", "format": "date-time", "description": "Last state modification time" },
+    "lastActive": { "type": "string", "format": "date-time", "description": "Last time work was active on this project" }
   }
 }

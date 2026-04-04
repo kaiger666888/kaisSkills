@@ -73,9 +73,14 @@ Present the proposed team clearly: "For this project, I recommend: [skill1 as ro
 Before marking any task as done and writing to state.json:
 1. Verify the output exists and is non-trivial
 2. Check it meets the task's acceptance criteria
-3. Only then update state.json with status "done"
+3. Record `artifactHash` (SHA256) if the task produced files — this is **mandatory** when files exist
+4. Only then update state.json with status "done"
 
-If validation fails, retry once. If still fails, escalate via Checkpoint 3.
+If validation fails:
+- Record the failure reason in `output` and set status to `failed` (permanent failure) or `blocked` (waiting for your input)
+- Retry once with adjusted parameters. If still fails, escalate via Checkpoint 3
+
+**Status semantics**: `failed` = skill completed but output is unusable; `blocked` = skill cannot proceed without external input.
 
 ## State Persistence
 
@@ -84,7 +89,7 @@ Each project gets a state file at `projects/<name>/state.json`.
 - Schema: see `references/state-schema.json`
 - Init new projects: run `scripts/project-init.sh <project-name>`
 - Before writing state: back up to `state.json.bak`
-- Always set `contextSnapshot` on the current running task (enables recovery)
+- Always set `contextSnapshot` on the current running task and at the global level (enables recovery). Format: `{ "step": "当前步骤", "outputs": ["已产出文件列表"], "pendingDecisions": ["待决问题"] }`
 
 ## Interrupt Recovery
 
