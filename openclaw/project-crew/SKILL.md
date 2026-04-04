@@ -12,7 +12,7 @@ description: "Intelligent task orchestration and project lifecycle management. G
 ## 智能模式（Smart Mode）
 
 当用户**没有提供 crew.js**，而是直接说出一个目标时，project-crew 进入智能模式。
-智能模式与现有的 crew.js 手动模式**共存互不干扰**——智能模式最终会自动生成 crew.js，然后复用现有执行引擎。
+智能模式与现有的 crew.js 手动模式**共存互不干扰**——智能模式最终会自动生成 crew.js，然后复用现有执行引擎的**全部能力**：DAG 分析、并行执行、进化选择、循环验证、Git worktree、checkpoint/resume。
 
 ### 触发条件
 
@@ -26,10 +26,12 @@ description: "Intelligent task orchestration and project lifecycle management. G
 用户说目标（无 crew.js）
 → Step 1: 复杂度判断（Solo vs Team）
 → Step 2: 需求分析（可选 brainstorm）
-→ Step 3: 自动组建团队
-→ Step 4: 自动生成 crew.js
-→ Step 5: 执行（复用 --execute 流程）
-→ Step 6: 生成开发报告
+→ Step 3: 自动组建团队 + 选择执行策略
+→ Step 4: 自动生成 crew.js（含高级特性）
+→ Step 5: 项目初始化（可选 bootstrap/git/worktrees）
+→ Step 6: 执行（--execute + 并行 + 进化 + 循环）
+→ Step 7: 验证 + 交付
+→ Step 8: 生成开发报告
 ```
 
 ### Step 1: 复杂度判断
@@ -55,24 +57,15 @@ description: "Intelligent task orchestration and project lifecycle management. G
   - brainstorm 的产出作为后续步骤的输入
   - brainstorm 的结论决定 skill 选择和任务分解
 
-### Step 3: 自动组建团队
+### Step 3: 自动组建团队 + 选择执行策略
+
+不仅选 skill，还要选**执行策略**——这是智能模式的核心升级。
+
+#### 3.1 组建团队
 
 1. 读取 `references/team-members.md` 获取 skill 能力矩阵
 2. 根据需求分析结果，自动选择最佳 skill 组合
-3. 记录选择理由到 `decisions` 数组：
-
-```json
-{
-  "decisions": [
-    {
-      "checkpoint": "team-formation",
-      "options": ["coding-agent", "claude-code-via-openclaw"],
-      "chosen": ["claude-code-via-openclaw", "chart-image", "notion"],
-      "reason": "新项目需完整开发流水线 + 可视化 + 文档交付"
-    }
-  ]
-}
-```
+3. 记录选择理由到 `decisions` 数组
 
 **选择规则**（来自 team-members.md）：
 - 新项目/大型项目 → claude-code-via-openclaw
@@ -81,42 +74,175 @@ description: "Intelligent task orchestration and project lifecycle management. G
 - 深度问题 → thinking-partner
 - 多阶段项目 → brainstorm → claude-code-via-openclaw
 
-### Step 4: 自动生成 crew.js
+#### 3.2 选择执行策略
 
-根据选定的 skill 组合和依赖关系，自动生成 DAG：
+根据任务类型，自动决定以下策略维度：
+
+| 策略维度 | 判断逻辑 |
+|---------|---------|
+| **并行（fan-out）** | 无依赖的步骤自动并行。如研究+图表可同时进行；前后端分离时并行 |
+| **进化（evolve）** | 创意型/质量敏感型任务自动开启。如研究报告、UI 设计、内容生产 |
+| **循环（loop）** | 需要迭代验证的任务自动开启。如开发→测试→修复、数据分析→可视化→校验 |
+| **Git 管理** | 中大型项目自动 `--bootstrap`（git init + .gitignore + 目录结构）|
+| **Worktrees** | 需要 evolve 时自动创建，让变体并行开发不冲突 |
+| **项目模板** | 检查是否匹配 node-lib / python-api / fullstack 等模板，匹配时先 `--template` 生成基础结构 |
+
+**任务类型 → 策略映射**：
+
+| 任务类型 | 并行 | 进化 | 循环 | Git | Worktrees | 模板 |
+|---------|------|------|------|-----|-----------|------|
+| 研究/分析 | ✅ 多角度 | ✅ | ❌ | ❌ | ❌ | ❌ |
+| 开发/实现 | ✅ 前后端 | ✅ | ✅ 测试 | ✅ | ✅ | ✅ 匹配时 |
+| 内容生产 | ✅ 多平台 | ✅ | ❌ | ❌ | ❌ | ❌ |
+| 快速脚本 | ❌ | ❌ | ❌ | ❌ | ❌ | ❌ |
+
+记录策略决策：
+```json
+{
+  "decisions": [
+    {
+      "checkpoint": "team-formation",
+      "options": ["coding-agent", "claude-code-via-openclaw"],
+      "chosen": ["claude-code-via-openclaw", "chart-image", "notion"],
+      "reason": "新项目需完整开发流水线 + 可视化 + 文档交付"
+    },
+    {
+      "checkpoint": "strategy",
+      "strategy": {
+        "parallel": true,
+        "evolve": ["research"],
+        "loop": ["implement"],
+        "bootstrap": true,
+        "worktrees": 2,
+        "template": "node-lib"
+      },
+      "reason": "开发型项目：前后端可并行，研究需多角度进化，实现需测试循环"
+    }
+  ]
+}
+```
+
+### Step 4: 自动生成 crew.js（含高级特性）
+
+根据选定的 skill 组合、依赖关系和执行策略，生成包含高级特性的 DAG：
 
 1. 分析 skill 之间的数据依赖关系（谁需要谁的输出）
-2. 确定执行顺序（串行 vs 并行）
-3. 添加必要的 retry、fallback、evolve 配置
-4. 写入 `workdir/crew.js`
+2. 确定执行顺序和并行分组（同层无依赖 → 并行）
+3. 根据执行策略添加 evolve / loop / retry / fallback 配置
+4. 推断项目语言/框架，设置 `project` 字段
+5. 写入 `workdir/crew.js`
 
 ```js
-// 自动生成的 crew.js 示例
+// 自动生成的 crew.js 示例 — 含高级特性
 module.exports = {
-  name: "auto-generated-project",
+  name: "auto-xxx",
   goal: "用户原始目标",
+  project: { lang: "node" },          // ← 自动推断语言
+  worktrees: 2,                        // ← 需要 evolve 时自动加
+  evolveStrategy: "best-output",       // ← 创意型任务自动加
   steps: [
-    { id: "brainstorm", skill: "brainstorm", params: {...}, output: "plan.md" },
-    { id: "implement", skill: "claude-code-via-openclaw", input: "plan.md", output: "src/" },
-    { id: "chart", skill: "chart-image", input: "plan.md", output: "chart.png" },
-    // ...
+    {
+      id: "research",
+      skill: "deep-research",
+      output: "report.md",
+      evolve: { rounds: 2, variants: 2, survive: 1 }
+      // ↑ 创意型自动加：2轮进化，每轮2个变体，保留最优1个
+    },
+    {
+      id: "implement",
+      skill: "claude-code-via-openclaw",
+      input: "report.md",
+      output: "src/",
+      loop: { max: 3, until: "测试通过" }
+      // ↑ 开发型自动加：最多3轮，直到测试通过
+    },
+    {
+      id: "chart",
+      skill: "chart-image",
+      input: "report.md",
+      output: "chart.png"
+      // ↑ 与 implement 无依赖，自动并行执行
+    }
   ]
 };
 ```
 
 生成后记录决策：
 ```json
-{ "checkpoint": "plan", "chosen": "生成的 DAG 结构", "reason": "基于依赖分析..." }
+{ "checkpoint": "plan", "chosen": "生成的 DAG 结构 + 高级特性", "reason": "基于依赖分析和策略选择..." }
 ```
 
-### Step 5: 执行
+### Step 5: 项目初始化
 
-复用现有的 `--execute` 流程：
-1. 运行 `node scripts/orchestrator.js --execute workdir/crew.js` 获取执行指令
-2. 按 layer 顺序执行（同层可并行）
-3. 每步验证产出后继续
+根据策略决策，在执行前完成项目基础设施准备：
 
-#### Self-Resolution 机制（智能模式特有）
+| 条件 | 动作 | 命令 |
+|------|------|------|
+| 中大型项目 | `--bootstrap` | `node scripts/orchestrator.js --bootstrap workdir/crew.js` |
+| 需要 evolve | 自动创建 worktrees | `node scripts/orchestrator.js --worktrees workdir/crew.js` |
+| 匹配项目模板 | 先 `--template` 生成基础结构 | `node scripts/orchestrator.js --template node-lib workdir/crew.js` |
+
+**初始化顺序**：template → bootstrap → worktrees（如有多项则依次执行）
+
+### Step 6: 执行
+
+复用现有 `--execute` 流程，但充分利用引擎的全部并行和高级能力：
+
+#### 6.1 同层并行执行
+
+编排器按 DAG layer 分组执行，**同层步骤自动并行**：
+
+```
+Layer 0: [research]                ← 单步，直接执行
+Layer 1: [implement, chart]        ← 无依赖，并行执行
+Layer 2: [docs]                    ← 依赖 implement，串行
+```
+
+#### 6.2 Evolve 步骤执行（进化选择）
+
+标记了 `evolve` 的步骤按以下流程执行：
+
+```
+创建 N 个变体（在独立 worktree 中）
+→ 并行执行所有变体
+→ 评估产出质量（基于 evolveStrategy 指标）
+→ 淘汰较差变体，保留最优 survive 个
+→ 如有下一轮，以存活变体为基础继续进化
+→ 最终选择全局最优产出
+```
+
+适用场景：研究报告需多角度对比、UI 设计需多方案比选、内容创作需多版本优化。
+
+#### 6.3 Loop 步骤执行（循环验证）
+
+标记了 `loop` 的步骤按以下流程执行：
+
+```
+执行步骤 → 检查 until 条件
+→ 条件未满足 → 分析失败原因，调整参数重试
+→ 条件满足 → 继续 DAG 下一步
+→ 达到 max 上限 → 记录警告，标记为 partial，继续执行
+```
+
+适用场景：开发→测试→修复循环、数据分析→校验循环、部署→健康检查循环。
+
+#### 6.4 Checkpoint
+
+每步完成后**自动 checkpoint**：
+- 保存当前执行状态到 `.checkpoint.json`
+- 支持断点恢复：`--resume` 从上次成功步骤继续
+- evolve 步骤的每个进化轮次也有独立 checkpoint
+
+### Step 7: 验证 + 交付
+
+执行完成后，进行最终验证：
+
+1. **产出检查**：确认每个 step 的 output 文件/目录存在且非空
+2. **目标对齐**：对照用户原始目标，评估完成度（≥90% → 交付，70-89% → 告知差距，<70% → 尝试补齐）
+3. **质量评估**：对关键产出进行质量自评
+4. **交付**：告知用户产出位置和摘要
+
+#### Self-Resolution 机制（贯穿 Step 6-7）
 
 当单个 step 执行失败时，**不因单任务失败 halt 整个项目**，按以下顺序 self-resolve：
 
@@ -124,14 +250,14 @@ module.exports = {
 Step 失败
 → 1. Retry：调整参数重试一次
 → 2. 换 skill：尝试替代 skill（如 coding-agent 替代 claude-code-via-openclaw）
-→ 3. 换方案：修改执行策略（如简化需求、缩小范围）
+→ 3. 换方案：修改执行策略（如简化需求、缩小范围、关闭 evolve 降低复杂度）
 → 4. Skip：标记为 "failed"，继续执行剩余步骤
 → 每次尝试都记录到 decisions 数组
 ```
 
-### Step 6: 生成开发报告
+### Step 8: 生成开发报告
 
-智能模式完成后，生成开发报告到 `workdir/report.md`：
+智能模式完成后，生成增强版开发报告到 `workdir/report.md`：
 
 ```markdown
 # 📋 Project Report: <project-name>
@@ -142,6 +268,14 @@ Step 失败
 - **Duration**: <开始时间> → <结束时间>
 - **Status**: ✅ Success / ⚠️ Partial (X of Y steps completed)
 
+## Execution Strategy
+- **Parallel**: <哪些步骤并行了，节省了多少时间>
+- **Evolve**: <哪些步骤用了进化，最终选择了哪个变体>
+- **Loop**: <哪些步骤用了循环，重试了几次>
+- **Git**: <是否有 bootstrap，分支信息>
+- **Worktrees**: <是否创建了 worktree，用于哪些变体>
+- **Template**: <是否使用了项目模板>
+
 ## Team
 - Selected skills: [skill 列表]
 - Selection reasoning: [为什么选这些]
@@ -150,13 +284,21 @@ Step 失败
 | Checkpoint | Decision | Reasoning |
 |-----------|----------|-----------|
 | Team formation | ... | ... |
+| Strategy | parallel + evolve + loop | ... |
 | Plan | ... | ... |
 
 ## Execution Log
-| Step | Skill | Status | Duration | Notes |
-|------|-------|--------|----------|-------|
-| brainstorm | brainstorm | done | 3min | ... |
-| implement | claude-code | done | 15min | ... |
+| Step | Skill | Status | Duration | Strategy | Notes |
+|------|-------|--------|----------|----------|-------|
+| research | deep-research | done | 5min | evolve (round 2, variant A selected) | ... |
+| implement | claude-code | done | 15min | loop (2/3 rounds) | ... |
+| chart | chart-image | done | 2min | parallel with implement | ... |
+
+## Evolve Details
+- **research**: 3 variants generated, variant B selected (score: 8.5/10)
+  - Variant A: [描述] — score 7.2
+  - Variant B: [描述] — score 8.5 ✅
+  - Variant C: [描述] — score 6.8
 
 ## Issues & Resolutions
 - <问题>: <如何解决的>
@@ -164,23 +306,37 @@ Step 失败
 ## Deliverables
 - <文件路径>: <描述>
 
+## Git Info
+- Repository: <路径>
+- Branches: <分支列表>
+- Worktrees: <worktree 列表及用途>
+- Commits: <提交数量和摘要>
+
 ## Quality Self-Assessment
 - Completeness: X/10
 - Code quality: X/10
 - Documentation: X/10
+- Goal alignment: X/10
 ```
 
-### 智能模式与手动模式的关系
+### 智能模式与手动模式对比
 
 | | 手动模式（crew.js） | 智能模式（Smart Mode） |
 |--|--|--|
 | **输入** | 用户提供 crew.js | 用户说目标 |
 | **团队选择** | 用户在 steps 中定义 | AI 自动选择 |
 | **DAG 构建** | 用户手动定义 | AI 自动生成 |
+| **并行执行** | 用户定义依赖，引擎推断 | AI 自动识别并行机会 |
+| **进化选择** | 用户配置 evolve 字段 | AI 按任务类型自动配置 |
+| **循环验证** | 用户配置 loop 字段 | AI 按任务类型自动配置 |
+| **项目初始化** | 用户手动 bootstrap | AI 自动判断并初始化 |
+| **Git/Worktree** | 用户手动管理 | AI 按策略自动管理 |
+| **项目模板** | 用户手动选择 | AI 自动匹配模板 |
 | **执行** | --execute | 同（复用 --execute） |
 | **失败处理** | retry/fallback 配置 | self-resolve 链 |
-| **报告** | 无（用户自定义） | 自动生成 report.md |
-| **适用场景** | 明确的固定流水线 | 一次性项目、探索性任务 |
+| **验证** | 用户自行验证 | 自动产出检查 + 目标对齐 |
+| **报告** | 无（用户自定义） | 自动生成增强版 report.md |
+| **适用场景** | 明确的固定流水线、可复用模板 | 一次性项目、探索性任务、快速交付 |
 
 两种模式共享：编排引擎、DAG 分析、并行执行、checkpoint/resume、evolve。
 
