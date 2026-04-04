@@ -3,7 +3,7 @@
   "title": "KaisTeam Project State",
   "description": "State file for kais-team project tracking. Stored at projects/<name>/state.json",
   "type": "object",
-  "required": ["project", "phase", "team", "tasks", "checkpoints", "createdAt", "lastActive", "updatedAt"],
+  "required": ["project", "phase", "mode", "team", "tasks", "checkpoints", "decisions", "createdAt", "lastActive", "updatedAt"],
   "properties": {
     "project": {
       "type": "string",
@@ -13,6 +13,11 @@
       "type": "string",
       "enum": ["analyzing", "forming_team", "planning", "executing", "delivering", "completed"],
       "description": "Current project phase"
+    },
+    "mode": {
+      "type": "string",
+      "enum": ["normal", "autopilot"],
+      "description": "Operating mode: normal (checkpoints ask user) or autopilot (fully autonomous)"
     },
     "goal": {
       "type": "string",
@@ -46,6 +51,20 @@
       "type": "array",
       "items": { "type": "string" },
       "description": "Completed checkpoints: team_confirmed, plan_approved, delivery_accepted"
+    },
+    "decisions": {
+      "type": "array",
+      "description": "Decision log (autopilot mode). Records choices made at each checkpoint.",
+      "items": {
+        "type": "object",
+        "properties": {
+          "checkpoint": { "type": "integer", "description": "Checkpoint number (1-4)" },
+          "options": { "type": "array", "items": { "type": "string" }, "description": "Options considered" },
+          "chosen": { "type": "string", "description": "Selected option" },
+          "reason": { "type": "string", "description": "Why this option was chosen" },
+          "timestamp": { "type": "string", "format": "date-time" }
+        }
+      }
     },
     "contextSnapshot": {
       "type": "string",

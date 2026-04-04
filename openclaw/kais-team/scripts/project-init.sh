@@ -1,11 +1,17 @@
 #!/usr/bin/env bash
 # project-init.sh — Initialize a kais-team project directory and state.json
-# Usage: bash project-init.sh <project-name> [goal-description]
-# Note: <project-name> should be a simple kebab-case name (e.g., "my-web-app"), not a path.
+# Usage: bash project-init.sh [--autopilot] <project-name> [goal-description]
+# Note: <project-name> can be a simple name (stored in skills/kais-team/projects/) or an absolute path.
 
 set -euo pipefail
 
-PROJECT="${1:?Usage: project-init.sh <project-name> [goal-description]}"
+MODE="normal"
+if [[ "${1:-}" == "--autopilot" ]]; then
+  MODE="autopilot"
+  shift
+fi
+
+PROJECT="${1:?Usage: project-init.sh [--autopilot] <project-name> [goal-description]}"
 GOAL="${2:-}"
 SKILL_DIR="$(cd "$(dirname "$0")/.." && pwd)"
 
@@ -17,7 +23,7 @@ else
   PROJECT_DIR="${PROJECTS_DIR}/${PROJECT}"
 fi
 
-# Validate: project name should not contain path traversal
+# Validate: no path traversal
 if [[ "${PROJECT_DIR}" == *".."* ]]; then
   echo "ERROR: Path traversal not allowed."
   exit 1
@@ -36,10 +42,12 @@ cat > "$PROJECT_DIR/state.json" << EOF
 {
   "project": "${PROJECT}",
   "phase": "analyzing",
+  "mode": "${MODE}",
   "goal": "${GOAL}",
   "team": [],
   "tasks": [],
   "checkpoints": [],
+  "decisions": [],
   "contextSnapshot": "",
   "createdAt": "${NOW}",
   "updatedAt": "${NOW}",
@@ -47,4 +55,4 @@ cat > "$PROJECT_DIR/state.json" << EOF
 }
 EOF
 
-echo "OK: Project initialized at $PROJECT_DIR/state.json"
+echo "OK: Project initialized at $PROJECT_DIR/state.json (mode: ${MODE})"
