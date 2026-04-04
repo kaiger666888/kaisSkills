@@ -199,6 +199,8 @@ Layer 1: [implement, chart]        ← 无依赖，并行执行
 Layer 2: [docs]                    ← 依赖 implement，串行
 ```
 
+**并发安全检查**：执行前计算当前层步骤总数。如果步骤数超过全局 `parallel` 上限（默认 5），分批执行：先执行前 N 个，完成后再执行下一批。记录批次信息到执行日志。
+
 #### 6.2 Evolve 步骤执行（进化选择）
 
 标记了 `evolve` 的步骤按以下流程执行：
@@ -425,7 +427,25 @@ module.exports = {
 | `timeout` | number | 超时秒数 |
 | `retry` | object\|number | 重试配置：`{ max: 3, delay: 5000 }` 或数字（默认 delay 3s） |
 | `fallback` | string | 失败时替代 skill 名称 |
-| `parallel` | number | 并行度限制 |
+| `parallel` | number | 并行度限制。默认 5（基于实测：zai/智谱 provider 超过 5 个并发会触发 LLM 速率限制） |
+
+### 并发安全
+
+**默认并发上限：5 个同时运行的 sub-agent。** 超过此数量会触发 LLM provider 速率限制（请求被跳过，返回空结果）。
+
+- crew.js 全局设置：`{ "parallel": 5 }`（默认）
+- 单步覆盖：step 级 `parallel` 字段可单独调整
+- evolve 变体数受此限制约束：`variants` 值不应超过 `parallel` 值
+
+**实测数据（zai/智谱 GLM-5.1）**：
+
+| 并发数 | 结果 |
+|--------|------|
+| 3 | ✅ 全部成功（33-34s） |
+| 5 | ✅ 全部成功（33-34s） |
+| 8 | ⚠️ 前 4-5 成功，后续触发限流（0 tokens，1-3s 空返回） |
+
+**建议**：保持 ≤5 并发，或在 Step 定义中为计算密集型 step 设置更低的 `parallel` 值。
 
 ### 隐式 input 规则
 
