@@ -1,6 +1,6 @@
 ---
 name: project-crew
-description: Intelligent task orchestration and project lifecycle management. "Graph is orchestration" — define skills with input/output dependencies, auto-analyze DAG, pick optimal execution strategy. Supports pipeline, fan-out, map-reduce, approval gates, event loops, nested DAG, git worktree parallel development, checkpoint/resume, and evolutionary selection.
+description: "Intelligent task orchestration and project lifecycle management. Graph is orchestration — define skills with input/output dependencies, auto-analyze DAG, pick optimal execution strategy. Supports pipeline, fan-out, map-reduce, approval gates, event loops, nested DAG, git worktree parallel development, checkpoint/resume, and evolutionary selection. Smart Mode: automatic team assembly and crew.js generation from natural language goals. Use when user says 全自动模式, autopilot, 别问我了全搞定, 帮我做一个项目, 开干, 拉个团队, build this, or presents a multi-step goal without providing crew.js."
 ---
 
 # Project Crew — 智能任务编排与项目管理
@@ -8,6 +8,181 @@ description: Intelligent task orchestration and project lifecycle management. "G
 **核心理念：图即编排。** 定义 skill 之间的数据依赖，编排器自动推断最优执行策略。
 
 **扩展能力：项目即仓库。** 自动创建 Git 仓库，支持并行 worktree 开发、检查点回溯、优胜劣汰。
+
+## 智能模式（Smart Mode）
+
+当用户**没有提供 crew.js**，而是直接说出一个目标时，project-crew 进入智能模式。
+智能模式与现有的 crew.js 手动模式**共存互不干扰**——智能模式最终会自动生成 crew.js，然后复用现有执行引擎。
+
+### 触发条件
+
+- 用户说出目标但未提供 crew.js
+- 触发词："全自动模式", "autopilot", "别问我了全搞定", "帮我做一个项目", "开干", "拉个团队", "build this"
+- 或任何需要多 skill 协调的多步骤项目需求
+
+### 智能模式流程
+
+```
+用户说目标（无 crew.js）
+→ Step 1: 复杂度判断（Solo vs Team）
+→ Step 2: 需求分析（可选 brainstorm）
+→ Step 3: 自动组建团队
+→ Step 4: 自动生成 crew.js
+→ Step 5: 执行（复用 --execute 流程）
+→ Step 6: 生成开发报告
+```
+
+### Step 1: 复杂度判断
+
+**Solo**（直接执行，不生成 crew.js）：
+- 预计 <5 分钟可完成
+- 单个 skill 即可处理
+- 一句话脚本或快速修复
+- → 直接调用对应 skill 执行，无需编排
+
+**Team**（进入智能编排流程）：
+- 需要 2+ 个 skill 协作
+- 多步骤项目
+- 需求不明确需要先分析
+- → 继续 Step 2
+
+### Step 2: 需求分析
+
+判断需求方向是否清晰：
+
+- **方向清晰**（用户明确说了要做什么）→ 跳过 brainstorm，直接进入 Step 3
+- **方向不清**（用户只有模糊想法、需要探索方案）→ 先调用 `brainstorm` skill 进行结构化分析
+  - brainstorm 的产出作为后续步骤的输入
+  - brainstorm 的结论决定 skill 选择和任务分解
+
+### Step 3: 自动组建团队
+
+1. 读取 `references/team-members.md` 获取 skill 能力矩阵
+2. 根据需求分析结果，自动选择最佳 skill 组合
+3. 记录选择理由到 `decisions` 数组：
+
+```json
+{
+  "decisions": [
+    {
+      "checkpoint": "team-formation",
+      "options": ["coding-agent", "claude-code-via-openclaw"],
+      "chosen": ["claude-code-via-openclaw", "chart-image", "notion"],
+      "reason": "新项目需完整开发流水线 + 可视化 + 文档交付"
+    }
+  ]
+}
+```
+
+**选择规则**（来自 team-members.md）：
+- 新项目/大型项目 → claude-code-via-openclaw
+- 小修复/脚本 → coding-agent
+- 方向不清 → brainstorm
+- 深度问题 → thinking-partner
+- 多阶段项目 → brainstorm → claude-code-via-openclaw
+
+### Step 4: 自动生成 crew.js
+
+根据选定的 skill 组合和依赖关系，自动生成 DAG：
+
+1. 分析 skill 之间的数据依赖关系（谁需要谁的输出）
+2. 确定执行顺序（串行 vs 并行）
+3. 添加必要的 retry、fallback、evolve 配置
+4. 写入 `workdir/crew.js`
+
+```js
+// 自动生成的 crew.js 示例
+module.exports = {
+  name: "auto-generated-project",
+  goal: "用户原始目标",
+  steps: [
+    { id: "brainstorm", skill: "brainstorm", params: {...}, output: "plan.md" },
+    { id: "implement", skill: "claude-code-via-openclaw", input: "plan.md", output: "src/" },
+    { id: "chart", skill: "chart-image", input: "plan.md", output: "chart.png" },
+    // ...
+  ]
+};
+```
+
+生成后记录决策：
+```json
+{ "checkpoint": "plan", "chosen": "生成的 DAG 结构", "reason": "基于依赖分析..." }
+```
+
+### Step 5: 执行
+
+复用现有的 `--execute` 流程：
+1. 运行 `node scripts/orchestrator.js --execute workdir/crew.js` 获取执行指令
+2. 按 layer 顺序执行（同层可并行）
+3. 每步验证产出后继续
+
+#### Self-Resolution 机制（智能模式特有）
+
+当单个 step 执行失败时，**不因单任务失败 halt 整个项目**，按以下顺序 self-resolve：
+
+```
+Step 失败
+→ 1. Retry：调整参数重试一次
+→ 2. 换 skill：尝试替代 skill（如 coding-agent 替代 claude-code-via-openclaw）
+→ 3. 换方案：修改执行策略（如简化需求、缩小范围）
+→ 4. Skip：标记为 "failed"，继续执行剩余步骤
+→ 每次尝试都记录到 decisions 数组
+```
+
+### Step 6: 生成开发报告
+
+智能模式完成后，生成开发报告到 `workdir/report.md`：
+
+```markdown
+# 📋 Project Report: <project-name>
+
+## Overview
+- **Goal**: <用户原始目标>
+- **Mode**: Smart Mode (Auto)
+- **Duration**: <开始时间> → <结束时间>
+- **Status**: ✅ Success / ⚠️ Partial (X of Y steps completed)
+
+## Team
+- Selected skills: [skill 列表]
+- Selection reasoning: [为什么选这些]
+
+## Key Decisions
+| Checkpoint | Decision | Reasoning |
+|-----------|----------|-----------|
+| Team formation | ... | ... |
+| Plan | ... | ... |
+
+## Execution Log
+| Step | Skill | Status | Duration | Notes |
+|------|-------|--------|----------|-------|
+| brainstorm | brainstorm | done | 3min | ... |
+| implement | claude-code | done | 15min | ... |
+
+## Issues & Resolutions
+- <问题>: <如何解决的>
+
+## Deliverables
+- <文件路径>: <描述>
+
+## Quality Self-Assessment
+- Completeness: X/10
+- Code quality: X/10
+- Documentation: X/10
+```
+
+### 智能模式与手动模式的关系
+
+| | 手动模式（crew.js） | 智能模式（Smart Mode） |
+|--|--|--|
+| **输入** | 用户提供 crew.js | 用户说目标 |
+| **团队选择** | 用户在 steps 中定义 | AI 自动选择 |
+| **DAG 构建** | 用户手动定义 | AI 自动生成 |
+| **执行** | --execute | 同（复用 --execute） |
+| **失败处理** | retry/fallback 配置 | self-resolve 链 |
+| **报告** | 无（用户自定义） | 自动生成 report.md |
+| **适用场景** | 明确的固定流水线 | 一次性项目、探索性任务 |
+
+两种模式共享：编排引擎、DAG 分析、并行执行、checkpoint/resume、evolve。
 
 ## 快速开始
 
