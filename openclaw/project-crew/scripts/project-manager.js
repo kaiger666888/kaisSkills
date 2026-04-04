@@ -203,8 +203,8 @@ function bootstrap(crewPath) {
   const gitignore = GITIGNORE_TEMPLATES[lang] || GITIGNORE_TEMPLATES.general;
   fs.writeFileSync(path.join(root, '.gitignore'), gitignore);
 
-  // LFS setup
-  const lfs = crewDef.lfs || [];
+  // LFS setup (supports both crewDef.lfs and crewDef.project.lfs)
+  const lfs = crewDef.lfs || crewDef.project?.lfs || [];
   if (lfs.length > 0) {
     run('git lfs install', root);
     for (const pattern of lfs) {
@@ -460,8 +460,21 @@ function rollback(crewPath) {
   const recoveryBranch = `recovery-${Date.now()}`;
   run(`git branch ${recoveryBranch}`, root);
 
+  // Backup .crew-meta.json before rollback (prevent evolve/merge from breaking)
+  const metaPath = path.join(root, '.crew-meta.json');
+  if (fs.existsSync(metaPath)) {
+    const backupPath = path.join(root, '.crew-meta.json.backup');
+    fs.copyFileSync(metaPath, backupPath);
+  }
+
   // Reset to target
   run(`git reset --hard ${targetCommit}`, root);
+
+  // Restore .crew-meta.json after reset
+  if (fs.existsSync(path.join(root, '.crew-meta.json.backup'))) {
+    fs.copyFileSync(path.join(root, '.crew-meta.json.backup'), metaPath);
+    fs.unlinkSync(path.join(root, '.crew-meta.json.backup'));
+  }
 
   return {
     rollbackTo: targetCommit,

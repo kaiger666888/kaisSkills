@@ -12,6 +12,7 @@ description: "Intelligent task orchestration and project lifecycle management. G
 ## 智能模式（Smart Mode）
 
 当用户**没有提供 crew.js**，而是直接说出一个目标时，project-crew 进入智能模式。
+当用户**同时提供了 crew.js 和目标**时，进入**参考模式**：以现有 crew.js 为基础，分析用户的新目标，优化或扩展 crew.js（如添加新步骤、调整依赖、开启 evolve 等），然后执行。
 智能模式与现有的 crew.js 手动模式**共存互不干扰**——智能模式最终会自动生成 crew.js，然后复用现有执行引擎的**全部能力**：DAG 分析、并行执行、进化选择、循环验证、Git worktree、checkpoint/resume。
 
 ### 触发条件
@@ -253,6 +254,11 @@ Step 失败
 → 3. 换方案：修改执行策略（如简化需求、缩小范围、关闭 evolve 降低复杂度）
 → 4. Skip：标记为 "failed"，继续执行剩余步骤
 → 每次尝试都记录到 decisions 数组
+
+**全部失败兜底**：如果所有 step 都被 skip（全部 failed），停止执行并向用户汇报：
+- 列出每个 step 的失败原因
+- 提供降级建议（如：缩小范围、拆分为更小任务、手动干预）
+- 保留已生成的 crew.js 供用户检查和手动调整
 ```
 
 ### Step 8: 生成开发报告
@@ -445,7 +451,7 @@ module.exports = {
 2. 对每个 step，将 input 文件名解析为来源 step id
 3. 构建邻接表：step.id → [依赖的 step.id]
 4. 检测环：DFS 回溯 → 标记为 event-loop 模式
-   - 注意：自环（同一文件 input+output）需通过 loop 字段辅助检测
+   - 注意：自环（同一文件 input+output）需通过 loop 字段辅助检测。**⚠️ 如果存在环依赖但未标记 loop 字段，行为未定义，可能导致无限循环。**
 5. 检查 await:"human" → 标记为 approval
 6. 统计拓扑特征：
    - 有 step 的 outDegree > 1（单源扇出）→ fan-out
@@ -660,12 +666,11 @@ evolve: { }  // 默认: output 文件大小 + 存在性
 evolve: { criteria: "代码可读性、错误处理、性能" }
 ```
 
-**显式配置示例：**
-
-```js
-// 默认进化（creative skill 自动开启）
+**默认进化（creative skill 自动开启）**
 { id: "implement", skill: "coding-agent", output: "src/index.js" }
 // → evolve: { enabled: true, rounds: 1, variants: 2, survive: 1 }
+
+**注意**：`variants` 最小值为 2，小于 2 时自动提升为 2。单变体无法进行优胜劣汰，进化无意义。
 
 // 自定义进化参数
 { id: "design", skill: "general", output: "docs/design.md",
@@ -695,6 +700,8 @@ deliver: telegram -1003840246680
 ```
 
 在 crew.js 中设置 `await: "human"` 的 step 会被跳过（cron 无人值守），除非 step 也标记了 `cronAwait: true`。
+
+**⚠️ 空执行检测**：如果所有 step 都被跳过（全部有 await 且无 cronAwait），cron 应报告空执行警告，不产生无意义的静默完成。
 
 ## 数据传递
 
@@ -809,6 +816,7 @@ node scripts/project-manager.js --evolve crew.js
 
 评估每个 worktree：
 - 检查所有 output 文件是否存在
+- **全失败的 worktree（所有 output 不存在）自动淘汰，不参与打分**
 - 按文件大小/质量打分
 - 保留得分 ≥ 最佳 80% 的 worktree（survive）
 - 淘汰其余（prune）
