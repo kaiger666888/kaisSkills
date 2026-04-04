@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Initialize a project-crew skill project."""
+"""Initialize a kais-pilot skill project."""
 import os, sys, json
 
 def main():

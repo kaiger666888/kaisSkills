@@ -1,5 +1,5 @@
 #!/usr/bin/env node
-// project-crew orchestrator — reads crew.js, builds DAG, outputs execution plan
+// kais-pilot orchestrator — reads crew.js, builds DAG, outputs execution plan
 // Usage: node orchestrator.js [--execute] <crew.js path>
 
 const fs = require('fs');

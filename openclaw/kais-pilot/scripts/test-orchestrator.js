@@ -1,5 +1,5 @@
 #!/usr/bin/env node
-// project-crew orchestrator logic tests
+// kais-pilot orchestrator logic tests
 // Implements: DAG build, cycle detection, mode inference, topological sort, error handling
 
 // ── Orchestrator core (from references/orchestrator.md) ──

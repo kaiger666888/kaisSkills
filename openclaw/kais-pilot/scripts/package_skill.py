@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Validate and package a project-crew skill for distribution."""
+"""Validate and package a kais-pilot skill for distribution."""
 import os, sys, ast, re
 
 SKILL_DIR = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
